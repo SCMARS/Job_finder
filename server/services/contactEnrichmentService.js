@@ -1,6 +1,7 @@
 const apolloService = require('./apolloService');
 const bundesagenturService = require('./bundesagenturService');
 const logger = require('../utils/logger');
+const webScrapingService = require('./webScrapingService'); // Added import for webScrapingService
 
 /**
  * Contact Enrichment Service
@@ -18,24 +19,183 @@ class ContactEnrichmentService {
    * @returns {Promise<Object>} Enriched job with real contact data
    */
   async enrichJob(job) {
-    try {
-      logger.info('Starting contact enrichment for job', { 
-        jobId: job.id, 
-        company: job.company 
-      });
+    // Initialize enrichment result
+    const enrichmentResult = {
+      ...job,
+      enrichment: {
+        status: 'started',
+        startedAt: new Date().toISOString(),
+        realContacts: [],
+        confidence: 'none'
+      }
+    };
 
-      const enrichmentResult = {
-        ...job,
-        enrichment: {
-          status: 'in_progress',
-          startedAt: new Date().toISOString(),
-          apolloData: null,
-          realContacts: [],
-          fallbackContacts: [],
-          bestContact: null,
-          confidence: 'low'
+    try {
+      // Step 0: Check if job already has contact info from original data
+      if (job.contactEmail || job.contactPhone) {
+        logger.info('Using existing contact data from job', {
+          jobId: job.id,
+          hasEmail: !!job.contactEmail,
+          hasPhone: !!job.contactPhone
+        });
+        
+        const existingContacts = [];
+        if (job.contactEmail) {
+          existingContacts.push({
+            type: 'email',
+            value: job.contactEmail,
+            source: 'arbeitsagentur_original',
+            confidence: 'high'
+          });
         }
-      };
+        if (job.contactPhone) {
+          existingContacts.push({
+            type: 'phone', 
+            value: job.contactPhone,
+            source: 'arbeitsagentur_original',
+            confidence: 'high'
+          });
+        }
+        
+        if (existingContacts.length > 0) {
+          enrichmentResult.enrichment.realContacts = existingContacts;
+          enrichmentResult.enrichment.bestContact = existingContacts[0];
+          enrichmentResult.enrichment.confidence = 'high';
+          enrichmentResult.enrichment.hasRealEmail = !!job.contactEmail;
+          
+          // Set final contact fields
+          if (job.contactEmail) {
+            enrichmentResult.contactEmail = job.contactEmail;
+          }
+          if (job.contactPhone) {
+            enrichmentResult.contactPhone = job.contactPhone;
+          }
+          
+          enrichmentResult.enrichment.status = 'completed';
+          enrichmentResult.enrichment.completedAt = new Date().toISOString();
+          
+          logger.info('Used existing contact data from job', {
+            jobId: job.id,
+            contactEmail: job.contactEmail,
+            contactPhone: job.contactPhone,
+            confidence: 'high'
+          });
+          
+          return enrichmentResult;
+        }
+      }
+
+      // Step 1: Parse contacts directly from Arbeitsagentur job page with advanced bypassing
+      let arbeitsagenturContacts = null;
+      if (job.id) {
+        logger.info('Starting Arbeitsagentur scraping', { jobId: job.id });
+        try {
+          arbeitsagenturContacts = await webScrapingService.scrapeArbeitsagenturContacts(job.id);
+          
+          logger.info('Arbeitsagentur scraping completed', { 
+            jobId: job.id, 
+            contactsFound: arbeitsagenturContacts ? arbeitsagenturContacts.length : 0,
+            hasContacts: !!(arbeitsagenturContacts && arbeitsagenturContacts.length > 0)
+          });
+          
+          if (arbeitsagenturContacts && arbeitsagenturContacts.length > 0) {
+            enrichmentResult.enrichment.arbeitsagenturData = { contacts: arbeitsagenturContacts };
+            enrichmentResult.enrichment.realContacts = arbeitsagenturContacts;
+            enrichmentResult.enrichment.bestContact = arbeitsagenturContacts[0];
+            
+            // Debug first few contacts
+            logger.info('DEBUG: First 3 contacts found', {
+              jobId: job.id,
+              contact0: arbeitsagenturContacts[0] ? {email: arbeitsagenturContacts[0].value, type: arbeitsagenturContacts[0].type, confidence: arbeitsagenturContacts[0].confidence} : null,
+              contact1: arbeitsagenturContacts[1] ? {email: arbeitsagenturContacts[1].value, type: arbeitsagenturContacts[1].type, confidence: arbeitsagenturContacts[1].confidence} : null,
+              contact2: arbeitsagenturContacts[2] ? {email: arbeitsagenturContacts[2].value, type: arbeitsagenturContacts[2].type, confidence: arbeitsagenturContacts[2].confidence} : null
+            });
+            
+            // Set email and phone from the contacts list
+            const emailContact = arbeitsagenturContacts.find(c => c.type === 'email');
+            const phoneContact = arbeitsagenturContacts.find(c => c.type === 'phone');
+            const externalLinkContact = arbeitsagenturContacts.find(c => c.type === 'external_link');
+            
+            if (emailContact) {
+              enrichmentResult.contactEmail = emailContact.value;
+            }
+            if (phoneContact) {
+              // Дополнительная проверка на мусорные номера (job IDs)
+              const phone = phoneContact.value;
+              if (!phone.match(/^\d{10}-\d$/)) {
+                enrichmentResult.contactPhone = phone;
+              } else {
+                logger.info('Отфильтрован мусорный номер (job ID)', { 
+                  jobId: job.id, 
+                  rejectedPhone: phone 
+                });
+              }
+            }
+            // НОВОЕ: обработка внешних ссылок
+            // Проверяем что НЕТ реальных контактов (email или нормального телефона)
+            const hasRealEmail = emailContact && emailContact.value && !emailContact.value.startsWith('http');
+            const hasRealPhone = phoneContact && phoneContact.value && 
+                                !phoneContact.value.match(/^\d{10}-\d$/) && 
+                                !phoneContact.value.match(/^\d+\s\d+\s\d+/) && 
+                                phoneContact.value.length > 7;
+            
+            if (externalLinkContact && !hasRealEmail && !hasRealPhone) {
+              enrichmentResult.contactEmail = externalLinkContact.value;
+              enrichmentResult.contactType = 'external_link';
+              logger.info('🔗 Присвоена внешняя ссылка как контакт', { 
+                jobId: job.id, 
+                externalLink: enrichmentResult.contactEmail ? enrichmentResult.contactEmail.substring(0, 50) + '...' : 'undefined',
+                hasRealEmail,
+                hasRealPhone,
+                phoneContactValue: phoneContact?.value?.substring(0, 20)
+              });
+            }
+            
+            // Присваиваем полный массив контактов к результату
+            enrichmentResult.contacts = arbeitsagenturContacts.map(contact => ({
+              type: contact.type,
+              value: contact.value,
+              confidence: contact.confidence,
+              source: contact.source || 'arbeitsagentur'
+            }));
+            
+            logger.info('Real contacts found via Arbeitsagentur page scraping', {
+              jobId: job.id,
+              contactsFound: arbeitsagenturContacts.length,
+              primaryEmail: arbeitsagenturContacts[0].value,
+              primaryType: arbeitsagenturContacts[0].type,
+              primaryConfidence: arbeitsagenturContacts[0].confidence,
+              emailFound: !!emailContact,
+              phoneFound: !!phoneContact,
+              confidence: 'very_high',
+              methods: ['arbeitsagentur_advanced_scraping']
+            });
+            
+            // Skip further enrichment steps if we found real contacts
+            enrichmentResult.enrichment.confidence = 'very_high';
+            enrichmentResult.enrichment.hasRealEmail = true;
+            enrichmentResult.enrichment.status = 'completed';
+            
+            return enrichmentResult;
+          } else {
+            // Если нет контактных данных, сохраняем ссылку на вакансию
+            const jobUrl = `https://www.arbeitsagentur.de/jobsuche/jobdetail/${job.id}`;
+            enrichmentResult.jobUrl = jobUrl;
+            logger.info('Нет контактных данных - сохранена ссылка на вакансию', { 
+              jobId: job.id, 
+              jobUrl 
+            });
+          }
+        } catch (error) {
+          logger.warn('Failed to scrape Arbeitsagentur contacts', {
+            jobId: job.id,
+            error: error.message
+          });
+          // В случае ошибки тоже сохраняем ссылку
+          const jobUrl = `https://www.arbeitsagentur.de/jobsuche/jobdetail/${job.id}`;
+          enrichmentResult.jobUrl = jobUrl;
+        }
+      }
 
       // Step 1: Use Apollo.io to find real contacts
       try {
@@ -49,8 +209,13 @@ class ContactEnrichmentService {
           
           // Update job with real contact info
           if (enrichmentResult.enrichment.bestContact) {
-            enrichmentResult.contactEmail = enrichmentResult.enrichment.bestContact.email;
-            enrichmentResult.contactPhone = enrichmentResult.enrichment.bestContact.phone;
+            if (enrichmentResult.enrichment.bestContact.type === 'email') {
+              enrichmentResult.contactEmail = enrichmentResult.enrichment.bestContact.value;
+            }
+            if (enrichmentResult.enrichment.bestContact.type === 'phone') {
+              enrichmentResult.contactPhone = enrichmentResult.enrichment.bestContact.value;
+            }
+            // Legacy support for old format
             enrichmentResult.contactName = enrichmentResult.enrichment.bestContact.name;
             enrichmentResult.contactTitle = enrichmentResult.enrichment.bestContact.title;
           }
@@ -68,29 +233,47 @@ class ContactEnrichmentService {
         });
       }
 
-      // Step 2: Fallback strategies if Apollo didn't find contacts
+      // NO FALLBACK! Only real contacts
       if (!enrichmentResult.enrichment.realContacts.length) {
-        const fallbackContacts = await this.generateFallbackContacts(job);
-        enrichmentResult.enrichment.fallbackContacts = fallbackContacts;
-        enrichmentResult.enrichment.bestContact = fallbackContacts[0] || null;
-        enrichmentResult.enrichment.confidence = 'medium';
-
-        if (enrichmentResult.enrichment.bestContact) {
-          enrichmentResult.contactEmail = enrichmentResult.enrichment.bestContact.email;
-          enrichmentResult.contactPhone = enrichmentResult.enrichment.bestContact.phone;
+        // Попытка fallback: если у вакансии есть внешняя ссылка (externeUrl / externalUrl), вернем ее как контакт
+        const externalUrlFromJob = job.externalUrl || job.rawData?.externeUrl;
+        if (externalUrlFromJob) {
+          enrichmentResult.contactEmail = externalUrlFromJob;
+          enrichmentResult.contactType = 'external_link';
+          enrichmentResult.enrichment.bestContact = { type: 'external_link', value: externalUrlFromJob };
+          enrichmentResult.enrichment.confidence = 'medium';
+          enrichmentResult.enrichment.hasRealEmail = false;
+          logger.info('Using externalUrl from job as fallback external_link', {
+            jobId: job.id,
+            externalUrl: externalUrlFromJob?.substring(0, 80)
+          });
+        } else {
+          logger.info('No real contacts found and no externalUrl available', {
+            jobId: job.id,
+            message: 'No contact enrichment available'
+          });
+          // Set everything to null - no fake data!
+          enrichmentResult.enrichment.bestContact = null;
+          enrichmentResult.enrichment.confidence = 'none';
+          enrichmentResult.contactEmail = null;
+          enrichmentResult.contactPhone = null;
+          enrichmentResult.contactName = null;
+          enrichmentResult.contactTitle = null;
+          enrichmentResult.enrichment.hasRealEmail = false;
         }
       }
 
-      // Step 3: Domain validation and scoring
+      // Step 3: Email validation (but NO fallback!)
       if (enrichmentResult.contactEmail) {
         const emailValidation = await this.validateEmail(enrichmentResult.contactEmail);
         enrichmentResult.enrichment.emailValidation = emailValidation;
         
-        if (!emailValidation.isValid && enrichmentResult.enrichment.fallbackContacts.length > 1) {
-          // Try next fallback contact
-          enrichmentResult.enrichment.bestContact = enrichmentResult.enrichment.fallbackContacts[1];
-          enrichmentResult.contactEmail = enrichmentResult.enrichment.bestContact.email;
-        }
+        // NO FALLBACK! Keep real email even if validation fails
+        logger.info('Email validation completed - keeping real email regardless', {
+          jobId: job.id,
+          isValid: emailValidation.isValid,
+          email: enrichmentResult.contactEmail.substring(0, 10) + '***'
+        });
       }
 
       enrichmentResult.enrichment.status = 'completed';
@@ -100,7 +283,8 @@ class ContactEnrichmentService {
         jobId: job.id,
         status: enrichmentResult.enrichment.status,
         confidence: enrichmentResult.enrichment.confidence,
-        hasRealEmail: !!enrichmentResult.contactEmail
+        hasRealEmail: !!enrichmentResult.contactEmail,
+        hasRealPhone: !!enrichmentResult.contactPhone
       });
 
       return enrichmentResult;
@@ -128,12 +312,25 @@ class ContactEnrichmentService {
    * @returns {Promise<Array>} Array of enriched jobs
    */
   async enrichJobs(jobs, options = {}) {
-    const { batchSize = 5, delayBetweenBatches = 2000 } = options;
+    // Для больших объемов используем меньший batch size
+    const defaultBatchSize = jobs.length > 10 ? 2 : 3; // Максимум 2-3 одновременно
+    const defaultDelay = jobs.length > 10 ? 5000 : 3000; // Больше задержка для больших объемов
+    
+    const { 
+      batchSize = defaultBatchSize, 
+      delayBetweenBatches = defaultDelay,
+      useWebScraping = true,
+      useApollo = false 
+    } = options;
+    
     const enrichedJobs = [];
     
     logger.info('Starting batch contact enrichment', {
       totalJobs: jobs.length,
-      batchSize
+      batchSize,
+      delayBetweenBatches,
+      useWebScraping,
+      strategy: jobs.length > 10 ? 'conservative' : 'normal'
     });
 
     // Process in batches to respect rate limits
@@ -188,126 +385,6 @@ class ContactEnrichmentService {
     });
 
     return enrichedJobs;
-  }
-
-  /**
-   * Generate fallback contact strategies when Apollo fails
-   * @param {Object} job - Job object
-   * @returns {Promise<Array>} Array of fallback contacts
-   */
-  async generateFallbackContacts(job) {
-    const contacts = [];
-
-    // Strategy 1: Company domain + common HR emails
-    if (job.companyDomain) {
-      const domain = job.companyDomain;
-      const hrEmails = [
-        `hr@${domain}`,
-        `jobs@${domain}`,
-        `karriere@${domain}`,
-        `bewerbung@${domain}`,
-        `recruiting@${domain}`,
-        `personal@${domain}`
-      ];
-
-      hrEmails.forEach(email => {
-        contacts.push({
-          email,
-          name: 'HR Department',
-          title: 'Human Resources',
-          company: job.company,
-          source: 'domain_generated',
-          confidence: 'medium'
-        });
-      });
-    }
-
-    // Strategy 2: Extract from generated company website
-    if (job.companyWebsite) {
-      try {
-        const websiteDomain = new URL(job.companyWebsite).hostname.replace(/^www\./, '');
-        if (websiteDomain !== job.companyDomain) {
-          contacts.push({
-            email: `info@${websiteDomain}`,
-            name: 'Info Contact',
-            title: 'General Information',
-            company: job.company,
-            source: 'website_generated',
-            confidence: 'low'
-          });
-        }
-      } catch (e) {
-        // Invalid URL, skip
-      }
-    }
-
-    // Strategy 3: Industry-specific contact patterns
-    const industryEmails = this.getIndustrySpecificEmails(job.industryCategory, job.companyDomain);
-    contacts.push(...industryEmails);
-
-    // Strategy 4: Company size-based approach
-    const sizeBasedEmails = this.getSizeBasedEmails(job.companySize, job.companyDomain);
-    contacts.push(...sizeBasedEmails);
-
-    return contacts.slice(0, 5); // Return top 5 fallback contacts
-  }
-
-  /**
-   * Get industry-specific email patterns
-   * @param {string} industry - Industry category
-   * @param {string} domain - Company domain
-   * @returns {Array} Industry-specific contacts
-   */
-  getIndustrySpecificEmails(industry, domain) {
-    if (!domain) return [];
-
-    const industryPatterns = {
-      'Technology': ['tech@', 'dev@', 'engineering@'],
-      'Healthcare': ['medical@', 'patient@', 'care@'],
-      'Finance': ['finance@', 'investment@', 'banking@'],
-      'Education': ['admissions@', 'faculty@', 'academic@'],
-      'Consulting': ['consulting@', 'advisory@', 'client@']
-    };
-
-    const patterns = industryPatterns[industry] || ['contact@', 'info@'];
-    
-    return patterns.map(pattern => ({
-      email: pattern + domain,
-      name: `${industry} Contact`,
-      title: `${industry} Department`,
-      company: domain,
-      source: 'industry_pattern',
-      confidence: 'low'
-    }));
-  }
-
-  /**
-   * Get company size-based email patterns
-   * @param {string} size - Company size category
-   * @param {string} domain - Company domain
-   * @returns {Array} Size-based contacts
-   */
-  getSizeBasedEmails(size, domain) {
-    if (!domain) return [];
-
-    const sizePatterns = {
-      'startup': ['founder@', 'team@', 'hello@'],
-      'small': ['owner@', 'management@', 'office@'],
-      'medium': ['hr@', 'people@', 'talent@'],
-      'large': ['corporate@', 'headquarters@', 'global@'],
-      'enterprise': ['enterprise@', 'corporate.hr@', 'global.talent@']
-    };
-
-    const patterns = sizePatterns[size] || ['hr@', 'contact@'];
-    
-    return patterns.slice(0, 2).map(pattern => ({
-      email: pattern + domain,
-      name: `${size} Company Contact`,
-      title: 'Company Representative',
-      company: domain,
-      source: 'size_pattern',
-      confidence: 'low'
-    }));
   }
 
   /**

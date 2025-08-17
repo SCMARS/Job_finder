@@ -284,9 +284,9 @@ class BundesagenturService {
   }
 
   /**
-   * Parse job results from API response
-   * @param {Object} data - Raw API response data
-   * @returns {Array} Parsed job listings
+   * Parse job results from API response (simple version for speed)
+   * @param {Object} data - Raw API response
+   * @returns {Array} Array of job objects
    */
   parseJobResults(data) {
     if (!data || !data.stellenangebote) {
@@ -306,10 +306,10 @@ class BundesagenturService {
       applicationDeadline: job.bewerbungsschluss,
       publishedDate: job.aktuelleVeroeffentlichungsdatum,
       externalUrl: job.externeUrl || this.generateJobUrl(job),
-      contactEmail: this.extractContactEmail(job),
-      contactPhone: this.extractContactPhone(job),
+      contactEmail: this.extractContactEmail(job),  // Simple method
+      contactPhone: this.extractContactPhone(job),  // Simple method
       salary: this.extractSalary(job),
-      companyWebsite: this.extractCompanyWebsite(job),
+      companyWebsite: this.extractCompanyWebsite(job), // Simple method
       companyDomain: this.extractCompanyDomain(job),
       companySize: this.extractCompanySize(job),
       industryCategory: this.extractIndustryCategory(job),
@@ -319,373 +319,196 @@ class BundesagenturService {
       postalCode: job.arbeitsort?.plz,
       coordinates: job.arbeitsort?.koordinaten,
       referenceNumber: job.refnr,
-      hashId: job.hashId, // Keep separate hashId field
+      hashId: job.hashId,
       rawData: job
     }));
   }
 
   /**
-   * Extract contact email from job data
-   * @param {Object} job - Job data
-   * @returns {string|null} Contact email
+   * Extract contact email from job data (simplified)
    */
   extractContactEmail(job) {
-    // Try to extract email from various fields
-    const textFields = [
-      job.stellenbeschreibung,
-      job.arbeitgeberdarstellung,
-      job.bewerbungshinweise,
-      job.titel,
-      job.beruf
-    ].filter(Boolean);
-
-    const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/;
+    // Simple email extraction without complex regex
+    const text = (job.stellenbeschreibung || '') + ' ' + (job.arbeitgeberdarstellung || '');
+    const emailMatch = text.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
     
-    for (const text of textFields) {
-      const match = text.match(emailRegex);
-      if (match) {
-        return match[0];
-      }
+    if (emailMatch) {
+      return emailMatch[0];
     }
 
-    // Generate potential email based on company name if no email found
-    if (job.arbeitgeber) {
-      const companyEmail = this.generateCompanyEmail(job.arbeitgeber);
-      if (companyEmail) {
-        return companyEmail;
-      }
-    }
-
+    // NO FAKE EMAIL GENERATION! Return null if not found
     return null;
   }
 
   /**
-   * Generate potential company email from company name
-   * @param {string} companyName - Company name
-   * @returns {string|null} Generated email
-   */
-  generateCompanyEmail(companyName) {
-    if (!companyName) return null;
-
-    // Clean company name
-    let cleanName = companyName
-      .toLowerCase()
-      .replace(/gmbh|ag|se|kg|ohg|mbh|ltd|inc|corp|llc/g, '')
-      .replace(/[^a-z0-9]/g, '')
-      .trim();
-
-    if (cleanName.length < 3) return null;
-
-    // Take first part if too long
-    if (cleanName.length > 15) {
-      cleanName = cleanName.substring(0, 15);
-    }
-
-    // Common HR email patterns
-    const patterns = [
-      `hr@${cleanName}.de`,
-      `jobs@${cleanName}.de`,
-      `karriere@${cleanName}.de`,
-      `bewerbung@${cleanName}.de`
-    ];
-
-    // Return first pattern as most likely
-    return patterns[0];
-  }
-
-  /**
-   * Extract contact phone from job data
-   * @param {Object} job - Job data
-   * @returns {string|null} Contact phone
+   * Extract contact phone from job data (simplified)
    */
   extractContactPhone(job) {
-    const textFields = [
-      job.stellenbeschreibung,
-      job.arbeitgeberdarstellung,
-      job.bewerbungshinweise
-    ].filter(Boolean);
-
-    // German phone number patterns
-    const phoneRegex = /(?:\+49|0)[1-9]\d{1,14}/g;
+    const text = (job.stellenbeschreibung || '') + ' ' + (job.arbeitgeberdarstellung || '');
+    const phoneMatch = text.match(/\+49[\s\-]?[\d\s\-]{8,15}|0[\d\s\-]{8,15}/);
     
-    for (const text of textFields) {
-      const match = text.match(phoneRegex);
-      if (match) {
-        return match[0];
+    if (phoneMatch) {
+      const phone = phoneMatch[0];
+      // Фильтрируем мусорные номера (job IDs)
+      if (phone.match(/^\d{10}-\d$/)) {
+        return null; // Это job ID, не телефон
       }
+      return phone;
     }
-
+    
     return null;
   }
 
   /**
-   * Extract salary information from job data
-   * @param {Object} job - Job data
-   * @returns {string|null} Salary information
+   * Parse contact information from Arbeitsagentur job page
    */
-  extractSalary(job) {
-    // First try the verguetung field
-    if (job.verguetung) {
-      return job.verguetung;
-    }
+  async parseJobContactInfo(jobId) {
+    try {
+      const detailUrl = `https://www.arbeitsagentur.de/jobsuche/jobdetail/${jobId}`;
+      
+      logger.info('Parsing contact info from job page', {
+        jobId,
+        url: detailUrl,
+        module: 'bundesagentur'
+      });
 
-    // Search for salary in various text fields
-    const textFields = [
-      job.titel,
-      job.stellenbeschreibung,
-      job.arbeitgeberdarstellung
-    ].filter(Boolean);
-
-    // German salary patterns
-    const salaryPatterns = [
-      /(\d{1,3}\.?\d{0,3})\s*(?:bis|-)?\s*(\d{1,3}\.?\d{0,3})?\s*(?:€|EUR|Euro)\s*(?:brutto|netto)?/gi,
-      /(?:entgelt|gehalt|vergütung|lohn):\s*(\d{1,3}\.?\d{0,3})\s*(?:bis|-)?\s*(\d{1,3}\.?\d{0,3})?\s*(?:€|EUR|Euro)/gi,
-      /(\d{1,3}\.?\d{0,3})\s*k\s*€?/gi, // e.g., "50k €"
-      /TV-L|TVöD|Entgeltgruppe|EG\s*\d+/gi // Public sector pay scales
-    ];
-
-    for (const text of textFields) {
-      for (const pattern of salaryPatterns) {
-        const match = text.match(pattern);
-        if (match) {
-          return match[0];
+      const response = await axios.get(detailUrl, {
+        timeout: 10000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
+      });
+
+      const html = response.data;
+      const contacts = {
+        emails: [],
+        phones: [],
+        contactPerson: null,
+        companyWebsite: null
+      };
+
+      // Extract emails
+      const emailMatches = html.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+      if (emailMatches) {
+        contacts.emails = [...new Set(emailMatches)]; // Remove duplicates
       }
-    }
 
-    // Generate estimated salary based on job title
-    return this.estimateSalaryByTitle(job.titel || job.beruf);
+      // Extract phone numbers (German format)
+      const phoneMatches = html.match(/(?:\+49|0)\s*\d{2,4}[\s\-]?\d{3,9}[\s\-]?\d{1,9}/g);
+      if (phoneMatches) {
+        contacts.phones = [...new Set(phoneMatches.map(phone => phone.replace(/\s+/g, ' ').trim()))];
+      }
+
+      // Extract contact person name
+      const contactPersonMatch = html.match(/(?:Herr|Frau)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)*)/);
+      if (contactPersonMatch) {
+        contacts.contactPerson = contactPersonMatch[0];
+      }
+
+      // Extract company homepage
+      const homepageMatch = html.match(/Homepage[^<]*<[^>]*href="([^"]+)"/i) ||
+                          html.match(/Internetseite[^<]*<[^>]*href="([^"]+)"/i);
+      if (homepageMatch) {
+        contacts.companyWebsite = homepageMatch[1];
+      }
+
+      logger.info('Contact parsing completed', {
+        jobId,
+        emailsFound: contacts.emails.length,
+        phonesFound: contacts.phones.length,
+        hasContactPerson: !!contacts.contactPerson,
+        hasWebsite: !!contacts.companyWebsite,
+        module: 'bundesagentur'
+      });
+
+      return contacts;
+
+    } catch (error) {
+      logger.warn('Failed to parse contact info from job page', {
+        jobId,
+        error: error.message,
+        module: 'bundesagentur'
+      });
+      
+      return {
+        emails: [],
+        phones: [],
+        contactPerson: null,
+        companyWebsite: null
+      };
+    }
   }
 
   /**
-   * Estimate salary based on job title
-   * @param {string} title - Job title
-   * @returns {string|null} Estimated salary range
-   */
-  estimateSalaryByTitle(title) {
-    if (!title) return null;
-
-    const titleLower = title.toLowerCase();
-    
-    // Senior positions
-    if (titleLower.includes('senior') || titleLower.includes('lead') || titleLower.includes('architect')) {
-      return '70.000 - 90.000 € brutto/Jahr';
-    }
-    
-    // Management positions
-    if (titleLower.includes('manager') || titleLower.includes('leiter') || titleLower.includes('head')) {
-      return '80.000 - 120.000 € brutto/Jahr';
-    }
-    
-    // Software/IT positions
-    if (titleLower.includes('software') || titleLower.includes('developer') || titleLower.includes('engineer')) {
-      return '50.000 - 70.000 € brutto/Jahr';
-    }
-    
-    // Junior positions
-    if (titleLower.includes('junior') || titleLower.includes('trainee') || titleLower.includes('praktikant')) {
-      return '35.000 - 50.000 € brutto/Jahr';
-    }
-    
-    // Medical positions
-    if (titleLower.includes('pflege') || titleLower.includes('krankenschwester') || titleLower.includes('arzt')) {
-      return '40.000 - 65.000 € brutto/Jahr';
-    }
-    
-    // Teaching positions
-    if (titleLower.includes('lehrer') || titleLower.includes('dozent') || titleLower.includes('professor')) {
-      return '45.000 - 70.000 € brutto/Jahr';
-    }
-
-    // Default range for other positions
-    return '40.000 - 60.000 € brutto/Jahr';
-  }
-
-  /**
-   * Extract company website from job data
-   * @param {Object} job - Job data
-   * @returns {string|null} Company website URL
+   * Extract company website from job data (simplified)
    */
   extractCompanyWebsite(job) {
-    // Try to extract website from various fields
-    const textFields = [
-      job.stellenbeschreibung,
-      job.arbeitgeberdarstellung,
-      job.bewerbungshinweise
-    ].filter(Boolean);
-
-    // Website patterns
-    const websitePatterns = [
-      /https?:\/\/(?:www\.)?([a-zA-Z0-9-]+\.(?:[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?))(?:\/[^\s]*)?/gi,
-      /www\.([a-zA-Z0-9-]+\.(?:[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?))/gi,
-      /([a-zA-Z0-9-]+\.(?:de|com|org|net|eu|info))(?![a-zA-Z])/gi
-    ];
-
-    for (const text of textFields) {
-      for (const pattern of websitePatterns) {
-        const matches = text.match(pattern);
-        if (matches) {
-          // Clean and return first valid match
-          let website = matches[0];
-          if (!website.startsWith('http')) {
-            website = 'https://' + website.replace(/^www\./, '');
-          }
-          return website;
-        }
+    const text = (job.stellenbeschreibung || '') + ' ' + (job.arbeitgeberdarstellung || '');
+    const websiteMatch = text.match(/https?:\/\/[^\s]+|www\.[^\s]+/);
+    
+    if (websiteMatch) {
+      let website = websiteMatch[0];
+      if (!website.startsWith('http')) {
+        website = 'https://' + website;
       }
+      return website;
     }
 
-    // Try to generate from company name
-    return this.generateCompanyWebsite(job.arbeitgeber);
+    // DON'T generate fake websites - return null if not found
+    return null;
   }
 
   /**
-   * Generate potential company website from company name
-   * @param {string} companyName - Company name
-   * @returns {string|null} Generated website URL
-   */
-  generateCompanyWebsite(companyName) {
-    if (!companyName) return null;
-
-    // Clean company name for domain generation
-    let cleanName = companyName
-      .toLowerCase()
-      .replace(/gmbh|ag|se|kg|ohg|mbh|ltd|inc|corp|llc/g, '')
-      .replace(/[^a-z0-9]/g, '')
-      .trim();
-
-    if (cleanName.length < 3) return null;
-
-    // Take first part if too long
-    if (cleanName.length > 20) {
-      cleanName = cleanName.substring(0, 20);
-    }
-
-    return `https://www.${cleanName}.de`;
-  }
-
-  /**
-   * Extract company domain from website or generate from name
-   * @param {Object} job - Job data
-   * @returns {string|null} Company domain
+   * Extract company domain (simplified)
    */
   extractCompanyDomain(job) {
     const website = this.extractCompanyWebsite(job);
     if (website) {
-      try {
-        const url = new URL(website);
-        return url.hostname.replace(/^www\./, '');
-      } catch (e) {
-        // If URL parsing fails, try to extract domain manually
-        const domainMatch = website.match(/(?:https?:\/\/)?(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})/);
-        return domainMatch ? domainMatch[1] : null;
+      const match = website.match(/\/\/(?:www\.)?([^\/]+)/);
+      return match ? match[1] : null;
+    }
+    
+    // Generate real domain pattern for email generation only
+    if (job.arbeitgeber) {
+      const domain = job.arbeitgeber.toLowerCase()
+        .replace(/gmbh|ag|se|kg|ohg|ltd|inc|corp|llc/gi, '')
+        .replace(/[^a-z0-9]/g, '')
+        .substring(0, 10);
+      if (domain.length > 3) {
+        return `${domain}.de`;
       }
     }
+    
     return null;
   }
 
   /**
-   * Extract company size information
-   * @param {Object} job - Job data
-   * @returns {string|null} Company size category
+   * Extract salary information (simplified)
+   */
+  extractSalary(job) {
+    return job.verguetung || '';
+  }
+
+  /**
+   * Extract company size (simplified)
    */
   extractCompanySize(job) {
-    const textFields = [
-      job.stellenbeschreibung,
-      job.arbeitgeberdarstellung
-    ].filter(Boolean);
-
-    // Company size indicators
-    const sizePatterns = [
-      { pattern: /(?:startup|start-up|gründung)/gi, size: 'startup' },
-      { pattern: /(?:mitarbeiter|employees|team).*?(\d+)/gi, size: 'custom' },
-      { pattern: /(?:klein|small|kmu)/gi, size: 'small' },
-      { pattern: /(?:mittel|medium)/gi, size: 'medium' },
-      { pattern: /(?:groß|large|konzern|corporation)/gi, size: 'large' },
-      { pattern: /(?:international|global|worldwide)/gi, size: 'enterprise' }
-    ];
-
-    for (const text of textFields) {
-      for (const { pattern, size } of sizePatterns) {
-        const match = text.match(pattern);
-        if (match) {
-          if (size === 'custom' && match[1]) {
-            const employeeCount = parseInt(match[1]);
-            if (employeeCount < 50) return 'small';
-            if (employeeCount < 250) return 'medium';
-            if (employeeCount < 1000) return 'large';
-            return 'enterprise';
-          }
-          return size;
-        }
-      }
-    }
-
-    // Default based on company name
-    const companyName = job.arbeitgeber?.toLowerCase() || '';
-    if (companyName.includes('gmbh') || companyName.includes('ag')) {
-      return 'medium';
-    }
-    if (companyName.includes('konzern') || companyName.includes('group')) {
-      return 'large';
-    }
-
-    return 'medium'; // Default assumption
+    return job.betriebsgroesse || '';
   }
 
   /**
-   * Extract industry category from job data
-   * @param {Object} job - Job data
-   * @returns {string|null} Industry category
+   * Extract industry category (simplified)
    */
   extractIndustryCategory(job) {
-    const textFields = [
-      job.titel,
-      job.beruf,
-      job.stellenbeschreibung,
-      job.arbeitgeberdarstellung
-    ].filter(Boolean);
-
-    // Industry keywords mapping
-    const industryPatterns = [
-      { pattern: /(?:software|IT|tech|digital|entwicklung|programming)/gi, industry: 'Technology' },
-      { pattern: /(?:medizin|medical|pflege|kranken|health|gesundheit)/gi, industry: 'Healthcare' },
-      { pattern: /(?:bank|finanz|finance|insurance|versicherung)/gi, industry: 'Finance' },
-      { pattern: /(?:bildung|education|schule|university|lehrer)/gi, industry: 'Education' },
-      { pattern: /(?:einzelhandel|retail|verkauf|sales|marketing)/gi, industry: 'Retail' },
-      { pattern: /(?:produktion|manufacturing|industrie|fabrik)/gi, industry: 'Manufacturing' },
-      { pattern: /(?:beratung|consulting|service|dienstleistung)/gi, industry: 'Consulting' },
-      { pattern: /(?:logistik|transport|spedition|delivery)/gi, industry: 'Logistics' },
-      { pattern: /(?:energie|energy|umwelt|environment|green)/gi, industry: 'Energy' },
-      { pattern: /(?:automotive|auto|car|fahrzeug)/gi, industry: 'Automotive' }
-    ];
-
-    for (const text of textFields) {
-      for (const { pattern, industry } of industryPatterns) {
-        if (pattern.test(text)) {
-          return industry;
-        }
-      }
-    }
-
-    return 'Other';
+    return job.branchengruppe || job.branche || '';
   }
 
   /**
-   * Generate job URL when external URL is not available
-   * @param {Object} job - Job object from API
-   * @returns {string} Generated job URL
+   * Generate job URL (simplified)
    */
   generateJobUrl(job) {
-    if (job.hashId) {
-      // Use Arbeitsagentur direct link with hashId
-      return `https://www.arbeitsagentur.de/jobsuche/jobdetail/${job.hashId}`;
-    } else if (job.refnr) {
-      // Use reference number for search
-      return `https://www.arbeitsagentur.de/jobsuche/suche?was=${encodeURIComponent(job.titel || '')}&wo=${encodeURIComponent(job.arbeitsort?.ort || '')}&referenznummer=${job.refnr}`;
-    }
-    // Fallback to general search
-    return `https://www.arbeitsagentur.de/jobsuche/suche?was=${encodeURIComponent(job.titel || '')}&wo=${encodeURIComponent(job.arbeitsort?.ort || '')}`;
+    const id = job.hashId || job.refnr;
+    return `https://www.arbeitsagentur.de/jobsuche/jobdetail/${id}`;
   }
 
   /**

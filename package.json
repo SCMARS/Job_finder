@@ -12,19 +12,24 @@
     "install-all": "npm install && cd client && npm install"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
-    "dotenv": "^16.3.1",
+    "2captcha": "^3.0.5-2",
     "axios": "^1.6.0",
-    "googleapis": "^128.0.0",
-    "winston": "^3.11.0",
-    "mongoose": "^8.0.0",
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
     "cron": "^3.1.6",
-    "multer": "^1.4.5-lts.1"
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "googleapis": "^128.0.0",
+    "mongoose": "^8.0.0",
+    "multer": "^1.4.5-lts.1",
+    "puppeteer": "^24.16.2",
+    "tesseract.js": "^6.0.1",
+    "whois": "^2.13.5",
+    "winston": "^3.11.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.0.1"
   },
   "keywords": [
     "job-automation",
@@ -37,4 +42,4 @@
   ],
   "author": "",
   "license": "MIT"
-} 
+}

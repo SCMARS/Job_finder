@@ -51,4 +51,7 @@ logger.instantly = logger.child({ module: 'instantly' });
 logger.pipedrive = logger.child({ module: 'pipedrive' });
 logger.automation = logger.child({ module: 'automation' });
 
+// Backward-compatible alias: some code uses logger.warning
+logger.warning = (...args) => logger.warn(...args);
+
 module.exports = logger; 

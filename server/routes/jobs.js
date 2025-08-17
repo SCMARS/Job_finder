@@ -1,16 +1,20 @@
 const express = require('express');
 const router = express.Router();
 const bundesagenturService = require('../services/bundesagenturService');
+const contactEnrichmentService = require('../services/contactEnrichmentService'); // Add this
 const logger = require('../utils/logger');
 
 /**
- * GET /api/jobs/search
+ * GET & POST /api/jobs/search
  * Search for jobs using various parameters
  */
-router.get('/search', async (req, res) => {
+const searchJobs = async (req, res) => {
   try {
+    // Support both GET (query params) and POST (body params)
+    const params = req.method === 'GET' ? req.query : req.body;
+    
     // Convert publishedSince from days to ISO date string
-    let publishedSince = req.query.publishedSince;
+    let publishedSince = params.publishedSince;
     if (publishedSince && !isNaN(publishedSince)) {
       const days = parseInt(publishedSince);
       const date = new Date();
@@ -19,28 +23,60 @@ router.get('/search', async (req, res) => {
     }
 
     const searchParams = {
-      keywords: req.query.keywords,
-      location: req.query.location,
-      employmentType: req.query.employmentType,
-      radius: parseInt(req.query.radius) || 25,
+      keywords: params.keywords,
+      location: params.location,
+      employmentType: params.employmentType,
+      radius: parseInt(params.radius) || 25,
       publishedSince,
-      page: parseInt(req.query.page) || 1,
-      size: Math.min(parseInt(req.query.size) || 50, 200) // Max 200 results per request
+      page: parseInt(params.page) || 1,
+      size: Math.min(parseInt(params.size) || 50, 20) // Max 20 results per request (to prevent system overload)
     };
 
-    logger.jobs.info('Job search request', { searchParams, ip: req.ip });
+    logger.jobs.info('Job search request', { searchParams, ip: req.ip, method: req.method });
 
     const results = await bundesagenturService.searchJobs(searchParams);
+    
+    // КРИТИЧЕСКИЙ FIX: ограничиваем количество jobs по запрошенному size
+    const requestedSize = parseInt(params.size) || 50;
+    if (results.jobs && results.jobs.length > requestedSize) {
+      logger.jobs.info(`Limiting results from ${results.jobs.length} to ${requestedSize}`, { searchParams });
+      results.jobs = results.jobs.slice(0, requestedSize);
+    }
+
+    // КРИТИЧЕСКИЙ FIX: включаем enrichment для извлечения контактов
+    if (results.jobs && results.jobs.length > 0) {
+      logger.jobs.info('Starting contact enrichment', { jobCount: results.jobs.length });
+      
+      try {
+                  const enrichmentOptions = {
+            useWebScraping: true,
+            useApollo: false,
+            batchSize: 1,
+            delayBetweenBatches: 5000
+          };
+        
+        results.jobs = await contactEnrichmentService.enrichJobs(results.jobs, enrichmentOptions);
+        logger.jobs.info('Contact enrichment completed', { 
+          enrichedCount: results.jobs.filter(job => job.contactEmail || job.contactPhone).length 
+        });
+      } catch (enrichmentError) {
+        logger.jobs.error('Contact enrichment failed', { 
+          error: enrichmentError.message,
+          jobCount: results.jobs.length 
+        });
+        // Продолжаем без enrichment
+      }
+    }
     
     res.json({
       success: true,
       data: results,
-      message: `Found ${results.totalCount} jobs, returned ${results.jobs.length}`
+      message: `Found ${results.totalCount} jobs, returned ${results.jobs.length} (limited to ${requestedSize}, enriched)`
     });
   } catch (error) {
     logger.jobs.error('Job search failed', { 
       error: error.message, 
-      searchParams: req.query 
+      searchParams: req.method === 'GET' ? req.query : req.body 
     });
     res.status(500).json({
       success: false,
@@ -48,7 +84,11 @@ router.get('/search', async (req, res) => {
       message: error.message
     });
   }
-});
+};
+
+// Support both GET and POST for /search
+router.get('/search', searchJobs);
+router.post('/search', searchJobs);
 
 /**
  * GET /api/jobs/:id
@@ -95,7 +135,7 @@ router.get('/:id', async (req, res) => {
 
 /**
  * POST /api/jobs/search
- * Advanced job search with complex filters
+ * Advanced job search with contact enrichment
  */
 router.post('/search', async (req, res) => {
   try {
@@ -109,7 +149,8 @@ router.post('/search', async (req, res) => {
       salaryMax,
       workingTime,
       page,
-      size
+      size,
+      enableEnrichment = true  // Add enrichment option
     } = req.body;
 
     // Validate required fields
@@ -144,12 +185,62 @@ router.post('/search', async (req, res) => {
 
     logger.jobs.info('Advanced job search request', { searchParams, ip: req.ip });
 
+    // Step 1: Get jobs from Bundesagentur
     const results = await bundesagenturService.searchJobs(searchParams);
+    
+    // Step 2: Enrich with real contacts if enabled and we have jobs
+    if (enableEnrichment && results.jobs && results.jobs.length > 0) {
+      logger.jobs.info('Starting contact enrichment', { jobCount: results.jobs.length });
+      
+      // Адаптивные настройки в зависимости от количества вакансий
+      let enrichmentOptions = {
+        useWebScraping: true,
+        useApollo: false
+      };
+      
+      if (results.jobs.length <= 5) {
+        // Малое количество - быстрая обработка
+        enrichmentOptions.batchSize = 3;
+        enrichmentOptions.delayBetweenBatches = 2000;
+      } else if (results.jobs.length <= 15) {
+        // Среднее количество - осторожная обработка
+        enrichmentOptions.batchSize = 2;
+        enrichmentOptions.delayBetweenBatches = 4000;
+      } else {
+        // Большое количество - очень осторожная обработка
+        enrichmentOptions.batchSize = 1; // По одной!
+        enrichmentOptions.delayBetweenBatches = 6000;
+        logger.jobs.warn('Large job batch detected, using conservative enrichment', {
+          jobCount: results.jobs.length
+        });
+      }
+      
+      try {
+        // Добавляем timeout для больших запросов
+        const timeoutMs = results.jobs.length > 15 ? 300000 : 180000; // 5 минут для больших, 3 минуты для обычных
+        
+        const enrichmentPromise = contactEnrichmentService.enrichJobs(results.jobs, enrichmentOptions);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Enrichment timeout')), timeoutMs)
+        );
+        
+        const enrichedJobs = await Promise.race([enrichmentPromise, timeoutPromise]);
+        
+        results.jobs = enrichedJobs;
+        logger.jobs.info('Contact enrichment completed', { 
+          enrichedCount: enrichedJobs.length 
+        });
+      } catch (enrichmentError) {
+        logger.jobs.warn('Contact enrichment failed, continuing with basic results', {
+          error: enrichmentError.message
+        });
+      }
+    }
     
     res.json({
       success: true,
       data: results,
-      message: `Found ${results.totalCount} jobs, returned ${results.jobs.length}`
+      message: `Found ${results.totalCount} jobs, returned ${results.jobs.length}${enableEnrichment ? ' (enriched)' : ''}`
     });
   } catch (error) {
     logger.jobs.error('Advanced job search failed', { 

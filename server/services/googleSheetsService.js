@@ -63,14 +63,14 @@ class GoogleSheetsService {
         'Description',
         'Requirements',
         'Job URL',
-        'Contact Email',
-        'Contact Phone',
+        'Contact Email', // Real extracted email
+        'Contact Phone', // Real extracted phone
         'Salary',
         'Published Date',
         'Application Deadline',
-        'Enriched Email',
-        'Enriched Phone',
-        'Apollo Status',
+        'Enrichment Confidence', // Confidence level
+        'Has Real Email', // Yes/No flag
+        'Enrichment Status', // Status of enrichment process
         'Instantly Status',
         'Pipedrive Status',
         'Processing Status',
@@ -253,6 +253,50 @@ class GoogleSheetsService {
   }
 
   /**
+   * Update job enrichment status in Google Sheets
+   * @param {string} jobId - Job ID to update
+   * @param {Object} enrichmentData - Enrichment data to update
+   */
+  async updateJobEnrichmentStatus(jobId, enrichmentData) {
+    try {
+      const range = 'Sheet1!A:Z';
+      const result = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range
+      });
+
+      const rows = result.data.values || [];
+      if (rows.length === 0) return;
+
+      // Find the row with this job ID
+      const jobRowIndex = rows.findIndex(row => row[0] === jobId);
+      if (jobRowIndex === -1) return;
+
+      // Update enrichment columns
+      const updateRange = `Sheet1!N${jobRowIndex + 1}:P${jobRowIndex + 1}`;
+      const values = [[
+        enrichmentData.contactEmail || rows[jobRowIndex][13] || '',
+        enrichmentData.contactPhone || rows[jobRowIndex][14] || '',
+        enrichmentData.apolloStatus || rows[jobRowIndex][15] || ''
+      ]];
+
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: updateRange,
+        valueInputOption: 'RAW',
+        resource: { values }
+      });
+
+      logger.info('Job enrichment status updated', { jobId, enrichmentData });
+    } catch (error) {
+      logger.error('Failed to update job enrichment status', { 
+        jobId, 
+        error: error.message 
+      });
+    }
+  }
+
+  /**
    * Get jobs with specific processing status
    * @param {string} status - Processing status to filter by
    * @returns {Promise<Array>} Array of jobs
@@ -299,14 +343,14 @@ class GoogleSheetsService {
       job.description ? job.description.substring(0, 500) : '', // Limit description length
       job.requirements ? job.requirements.substring(0, 500) : '',
       job.externalUrl || '',
-      job.contactEmail || '',
-      job.contactPhone || '',
+      job.contactEmail || '', // Real extracted email
+      job.contactPhone || '', // Real extracted phone
       job.salary || '',
       job.publishedDate || '',
       job.applicationDeadline || '',
-      '', // Enriched Email
-      '', // Enriched Phone
-      'Pending', // Apollo Status
+      job.enrichment?.confidence || '', // Enrichment confidence
+      job.enrichment?.hasRealEmail ? 'Yes' : 'No', // Has real email flag
+      job.enrichment?.status || 'Pending', // Enrichment Status
       'Pending', // Instantly Status
       'Pending', // Pipedrive Status
       'New', // Processing Status

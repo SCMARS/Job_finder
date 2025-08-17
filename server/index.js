@@ -10,6 +10,7 @@ const configRoutes = require('./routes/config');
 const sheetsRoutes = require('./routes/sheets');
 const automationRoutes = require('./routes/automation');
 const enrichmentRoutes = require('./routes/enrichment');
+const captchaRoutes = require('./routes/captcha');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -25,6 +26,7 @@ app.use('/api/config', configRoutes);
 app.use('/api/sheets', sheetsRoutes);
 app.use('/api/automation', automationRoutes);
 app.use('/api/enrichment', enrichmentRoutes);
+app.use('/api/captcha', captchaRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
