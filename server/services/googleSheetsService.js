@@ -10,7 +10,7 @@ class GoogleSheetsService {
     this.credentialsPath = process.env.GOOGLE_SHEETS_CREDENTIALS_PATH;
     this.initialized = false;
     this.isDisabled = false; // Graceful-disable flag when not configured
-    this.sheetTitle = null; // Resolved sheet title (e.g., 'Sheet1')
+    this.sheetTitle = process.env.GOOGLE_SHEETS_SHEET_TITLE || null; // Resolved sheet title
   }
 
   /**
@@ -52,21 +52,28 @@ class GoogleSheetsService {
         credentials.client_email,
         null,
         credentials.private_key,
-        ['https://www.googleapis.com/auth/spreadsheets']
+        [
+          'https://www.googleapis.com/auth/spreadsheets',
+          'https://www.googleapis.com/auth/drive'
+        ]
       );
 
       // Initialize Sheets API
       this.sheets = google.sheets({ version: 'v4', auth });
       this.initialized = true;
 
-      // Resolve first sheet title for A1 ranges
-      try {
-        const meta = await this.sheets.spreadsheets.get({ spreadsheetId: this.spreadsheetId });
-        this.sheetTitle = meta?.data?.sheets?.[0]?.properties?.title || 'Sheet1';
-        logger.sheets.info('Resolved sheet title', { sheetTitle: this.sheetTitle });
-      } catch (e) {
-        this.sheetTitle = 'Sheet1';
-        logger.sheets.warn('Failed to resolve sheet title, defaulting to Sheet1');
+      // Resolve first sheet title for A1 ranges (unless overridden by env)
+      if (!this.sheetTitle) {
+        try {
+          const meta = await this.sheets.spreadsheets.get({ spreadsheetId: this.spreadsheetId });
+          this.sheetTitle = meta?.data?.sheets?.[0]?.properties?.title || 'Sheet1';
+          logger.sheets.info('Resolved sheet title', { sheetTitle: this.sheetTitle });
+        } catch (e) {
+          this.sheetTitle = 'Sheet1';
+          logger.sheets.warn('Failed to resolve sheet title, defaulting to Sheet1');
+        }
+      } else {
+        logger.sheets.info('Using sheet title from env', { sheetTitle: this.sheetTitle });
       }
 
       logger.sheets.info('Google Sheets service initialized successfully');
