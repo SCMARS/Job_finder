@@ -6,10 +6,29 @@ class CaptchaService {
     this.apiKey = process.env.TWOCAPTCHA_API_KEY;
     this.solver = new Solver(this.apiKey);
     
+    // Simple in-process limiter for concurrent captcha solves
+    this.maxConcurrent = 3;
+    this.currentActive = 0;
+    this.queue = [];
+    
     if (!this.apiKey) {
       logger.warn('2Captcha API key not found in environment variables');
     } else {
       logger.info('2Captcha service initialized successfully');
+    }
+  }
+
+  async withLimit(task) {
+    if (this.currentActive >= this.maxConcurrent) {
+      await new Promise(resolve => this.queue.push(resolve));
+    }
+    this.currentActive++;
+    try {
+      return await task();
+    } finally {
+      this.currentActive--;
+      const next = this.queue.shift();
+      if (next) next();
     }
   }
 
@@ -48,8 +67,8 @@ class CaptchaService {
         throw new Error('Неподдерживаемый формат изображения');
       }
 
-      // Отправляем в 2Captcha (правильный API для версии 3.0.5)
-      const result = await this.solver.imageCaptcha(imageForSending, {
+      // Отправляем в 2Captcha через лимитер
+      const result = await this.withLimit(() => this.solver.imageCaptcha(imageForSending, {
         numeric: 0, // 0 = любые символы, 1 = только цифры, 2 = только буквы
         min_len: 5,
         max_len: 7,
@@ -57,7 +76,7 @@ class CaptchaService {
         regsense: 1, // 1 = чувствительно к регистру, соответствует форме
         calc: 0, // 0 = обычная капча, 1 = математическое выражение
         lang: 'de' // язык капчи (немецкий)
-      });
+      }));
 
       // Разные версии библиотеки возвращают разные форматы: строка или объект { data, id } / { code }
       let solvedText = null;

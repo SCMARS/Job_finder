@@ -7,6 +7,23 @@ class WebScrapingService {
   constructor() {
     this.browser = null;
     this.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+    // Simple in-process pool limiter for page scrapes
+    this.maxConcurrentScrapes = 6;
+    this.currentScrapes = 0;
+    this.scrapeQueue = [];
+  }
+
+  async _acquireSlot() {
+    if (this.currentScrapes >= this.maxConcurrentScrapes) {
+      await new Promise(resolve => this.scrapeQueue.push(resolve));
+    }
+    this.currentScrapes++;
+  }
+
+  _releaseSlot() {
+    this.currentScrapes--;
+    const next = this.scrapeQueue.shift();
+    if (next) next();
   }
 
   async initBrowser() {
@@ -66,6 +83,7 @@ class WebScrapingService {
     const contacts = [];
     
     try {
+      await this._acquireSlot();
       logger.info('Scraping Arbeitsagentur job page with advanced bypassing', {
         jobId,
         url
@@ -91,6 +109,27 @@ class WebScrapingService {
         try { await page.setDefaultTimeout(60000); } catch {}
         try { await page.setDefaultNavigationTimeout(90000); } catch {}
         
+        // Network interception: block heavy resources
+        try {
+          await page.setRequestInterception(true);
+          page.on('request', (req) => {
+            try {
+              const url = req.url();
+              const resourceType = req.resourceType();
+              const isCaptcha = /captcha/i.test(url) || /id-aas-service\/ct\/v1\/captcha/i.test(url);
+              if (isCaptcha) return req.continue();
+              // Allow only document, xhr, fetch
+              const allowTypes = new Set(['document', 'xhr', 'fetch', 'other']);
+              if (!allowTypes.has(resourceType)) return req.abort();
+              // Block common heavy hosts
+              if (/(google-analytics|gtag|doubleclick|facebook|hotjar|segment)\./i.test(url)) return req.abort();
+              // Block images/fonts/styles explicitly
+              if (/\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|eot|css)(\?|$)/i.test(url)) return req.abort();
+              return req.continue();
+            } catch { try { req.continue(); } catch {} }
+          });
+        } catch {}
+        
         // Set user agent and headers
       await page.setUserAgent(this.userAgent);
       await page.setViewport({ width: 1920, height: 1080 });
@@ -108,9 +147,6 @@ class WebScrapingService {
           'sec-fetch-mode': 'navigate',
           'sec-fetch-site': 'none',
           'sec-fetch-user': '?1',
-          'upgrade-insecure-requests': '1',
-          'DNT': '1',
-          'Connection': 'keep-alive'
         });
 
         // Navigate to job page
@@ -221,7 +257,7 @@ class WebScrapingService {
               // labeled text
               const txt = (node.innerText || '').replace(/[\u00A0\u202F\u2007]/g,' ').replace(/[\u200B\u200C\u200D]/g,'');
               const pm = txt.match(/Telefon\s*:\s*([+0-9\s()\-]{8,})/i); if (pm) pushUnique(result.phones, pm[1]);
-              const em = txt.match(/E-?Mail\s*:\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i); if (em) pushUnique(result.emails, em[1]);
+              const em = txt.match(/E-?Mail\s*:\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[a-zA-Z]{2,})/i); if (em) pushUnique(result.emails, em[1]);
               // shadow DOM recursion
               if (node.shadowRoot) collect(node.shadowRoot);
               const children = node.children ? Array.from(node.children) : [];
@@ -254,7 +290,7 @@ class WebScrapingService {
               const scan = (node) => {
                 const text = (node.innerText || '').replace(/[\u00A0\u202F\u2007]/g, ' ').replace(/[\u200B\u200C\u200D]/g, '');
                 const pm = text.match(/Telefon\s*:\s*([+0-9\s()\-]{8,})/i); if (pm) pushUnique(result.phones, pm[1]);
-                const em = text.match(/E-?Mail\s*:\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i); if (em) pushUnique(result.emails, em[1]);
+                const em = text.match(/E-?Mail\s*:\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[a-zA-Z]{2,})/i); if (em) pushUnique(result.emails, em[1]);
                 if (node.shadowRoot) scan(node.shadowRoot);
                 const children = node.children ? Array.from(node.children) : [];
                 children.forEach(scan);
@@ -428,6 +464,7 @@ class WebScrapingService {
         hasRealContacts
       });
 
+      this._releaseSlot();
       return contacts;
 
     } catch (error) {
@@ -436,6 +473,7 @@ class WebScrapingService {
         error: error.message,
         stack: error.stack
       });
+    this._releaseSlot();
     return contacts;
     }
   }
