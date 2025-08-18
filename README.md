@@ -1,482 +1,158 @@
 # 🚀 Job Automation System
 
-**Intelligent German Job Search & Lead Generation Platform**
+**Intelligent German Job Search & Contact Extraction Platform**
 
-> Automated job discovery from Bundesagentur für Arbeit with contact enrichment, email campaigns, and CRM integration
+> Automated job discovery from Bundesagentur für Arbeit with robust CAPTCHA handling, cookie consent strategies, contact extraction, and Google Sheets integration.
 
-[![Node.js](https://img.shields.io/badge/Node.js-16+-green.svg)](https://nodejs.org/)
-[![React](https://img.shields.io/badge/React-19+-blue.svg)](https://reactjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-4.9+-blue.svg)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/) [![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)
 
-## 📋 Table of Contents
-
-- [Features](#-features)
-- [Quick Start](#-quick-start)
-- [Configuration](#️-configuration)
-- [API Documentation](#-api-documentation)
-- [Automation Workflow](#-automation-workflow)
-- [Architecture](#️-architecture)
-- [Troubleshooting](#-troubleshooting)
-- [Contributing](#-contributing)
+## 📋 Contents
+- Features
+- Quick Start
+- Environment Variables
+- Google Sheets Setup
+- Run & Verify (End-to-End)
+- API Reference (curl examples)
+- Troubleshooting (CAPTCHA, Cookies, Sheets)
 
 ## 🎯 Features
-
-### 🔍 **Job Discovery**
-- **Bundesagentur für Arbeit API** integration for comprehensive German job search
-- **Multi-city search** with intelligent filtering
-- **Real-time job parsing** with enhanced contact extraction
-- **Smart salary estimation** based on position type and market data
-- **Automatic URL generation** for all job listings
-
-### 📊 **Data Management**
-- **Google Sheets integration** for centralized job storage
-- **Batch processing** for large datasets (up to 200 jobs at once)
-- **Real-time statistics** and performance tracking
-- **Automatic data deduplication**
-
-### 🤖 **Contact Enrichment**
-- **Apollo.io integration** for contact discovery
-- **Smart email generation** from company names
-- **Phone number extraction** from job descriptions
-- **Contact validation** and scoring
-
-### 📧 **Email Automation**
-- **Instantly.ai integration** for email campaigns
-- **Response tracking** and lead scoring
-- **A/B testing** capabilities
-- **Bounce handling** and list management
-
-### 💼 **CRM Integration**
-- **Pipedrive integration** for lead management
-- **Automatic pipeline** progression
-- **Deal creation** from positive responses
-- **Activity tracking** and reporting
-
-### 🎛️ **Management Dashboard**
-- **Real-time monitoring** of all processes
-- **Visual analytics** and performance metrics
-- **Automation scheduling** with cron patterns
-- **Configuration management** interface
+- Bundesagentur für Arbeit job search with filtering (keywords, Ort, Radius, Zeitraum, Beschäftigungsart)
+- Robust cookie consent strategies (multi-selector click, double-click, storage flags, forced hide)
+- CAPTCHA solving via 2Captcha with retries, reloads, and case-sensitive handling
+- Contact extraction priority: email/phone first; fallback to external link only if none found
+- Shadow DOM traversal and unicode-aware regex for emails/phones
+- Google Sheets integration with graceful disable if misconfigured
+- Frontend dashboard with Job Search, Automation, Statistics
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- **Node.js** 16+ and npm
-- **Google Cloud Project** with Sheets API enabled
-- **API keys** for Apollo.io, Instantly.ai, and Pipedrive
-
-### Installation
-
-1. **Clone and setup:**
+### 1) Install
 ```bash
 cd "product pro"
 npm run install-all
 ```
 
-2. **Configure environment:**
+### 2) Configure env
 ```bash
 cp env.example .env
+# Edit .env values (see below)
 ```
 
-3. **Set up Google Sheets:**
-   - Create service account in Google Cloud Console
-   - Download credentials JSON
-   - Place in `credentials/google-sheets-credentials.json`
-   - Create Google Spreadsheet and share with service account
+Minimal required to run search + enrichment:
+- `PORT=3002`
+- `TWOCAPTCHA_API_KEY=...`
+- For Google Sheets (optional but recommended):
+  - `GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/google-sheets-credentials.json`
+  - `GOOGLE_SHEETS_SPREADSHEET_ID=...`
+  - `GOOGLE_SHEETS_SHEET_TITLE=Лист1` (or your sheet name)
 
-4. **Start the application:**
+### 3) Start
 ```bash
-# Development mode
 npm run dev
-
-# Production mode
-npm run build
-npm start
 ```
+- Frontend: http://localhost:3000
+- Backend:  http://localhost:3002
 
-**Access:** Frontend at `http://localhost:3000`, Backend at `http://localhost:3001`
-
-## ⚙️ Configuration
-
-### Environment Variables
-
+## ⚙️ Environment Variables
+See `env.example` for a full list. Important ones:
 ```env
-# Bundesagentur API
+PORT=3002
+NODE_ENV=development
+
+# Bundesagentur
 BUNDESAGENTUR_API_URL=https://rest.arbeitsagentur.de/jobboerse/jobsuche-service
 BUNDESAGENTUR_CLIENT_ID=jobboerse-jobsuche
 
+# 2Captcha
+TWOCAPTCHA_API_KEY=your_2captcha_api_key
+
 # Google Sheets
-GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
-GOOGLE_APPLICATION_CREDENTIALS=./credentials/google-sheets-credentials.json
+GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/google-sheets-credentials.json
+GOOGLE_SHEETS_SPREADSHEET_ID=your_google_sheets_id
+GOOGLE_SHEETS_SHEET_TITLE=Лист1
 
-# Apollo.io
-APOLLO_API_KEY=your_apollo_api_key
-
-# Instantly.ai
-INSTANTLY_API_KEY=your_instantly_api_key
-
-# Pipedrive
-PIPEDRIVE_API_TOKEN=your_pipedrive_token
-PIPEDRIVE_COMPANY_DOMAIN=your_company_domain
-
-# Application
-PORT=3001
-NODE_ENV=development
-LOG_LEVEL=info
+# Puppeteer
+PUPPETEER_CLOSE_TABS=false
 ```
 
-### Google Sheets Setup
+## 📑 Google Sheets Setup
+1. Create a Service Account (GCP) and enable APIs:
+   - Google Sheets API
+   - (Added scope) Drive API
+2. Download credentials JSON → save to `credentials/google-sheets-credentials.json`
+3. Share your spreadsheet with the service account (Editor)
+4. Set `GOOGLE_SHEETS_SPREADSHEET_ID` and optional `GOOGLE_SHEETS_SHEET_TITLE`
 
-1. **Create Google Cloud Project:**
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Enable Google Sheets API
-   - Create Service Account
-   - Download JSON credentials
+Backend will auto-resolve first sheet title if not provided and will gracefully disable Sheets if config is missing.
 
-2. **Spreadsheet Configuration:**
-   - Create new Google Spreadsheet
-   - Share with service account email
-   - Grant "Editor" permissions
-   - Copy spreadsheet ID from URL
-
-### API Keys Setup
-
-#### Apollo.io
-- Register at [Apollo.io](https://www.apollo.io)
-- Navigate to Settings > API
-- Copy your API key
-
-#### Instantly.ai
-- Log into [Instantly.ai](https://instantly.ai)
-- Go to Settings > API
-- Generate API key
-
-#### Pipedrive
-- Access your Pipedrive account
-- Go to Settings > Personal preferences > API
-- Copy API token
-- Note your company domain
-
-## 📚 API Documentation
-
-### Jobs API
-
-#### Search Jobs
-```http
-POST /api/jobs/search
-Content-Type: application/json
-
-{
-  "keywords": "software developer",
-  "location": "Berlin",
-  "radius": 50,
-  "size": 50,
-  "publishedSince": "30",
-  "employmentType": "VOLLZEIT"
-}
+## ✅ Run & Verify (End-to-End)
+1) Health check
+```bash
+curl -s http://localhost:3002/api/health | jq
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "jobs": [
-      {
-        "id": "job_id",
-        "title": "Senior Software Developer",
-        "company": "Tech Company GmbH",
-        "location": "Berlin",
-        "salary": "70.000 - 90.000 € brutto/Jahr",
-        "contactEmail": "hr@techcompany.de",
-        "externalUrl": "https://...",
-        "publishedDate": "2024-01-15"
-      }
-    ],
-    "totalCount": 156,
-    "searchParams": {...}
-  }
-}
-```
-
-### Automation API
-
-#### Run Automation
-```http
-POST /api/automation/run
-Content-Type: application/json
-
-{
-  "searchParams": {
+2) Search 1–5 jobs (Berlin, last 30 days) with enrichment
+```bash
+curl -s -X POST http://localhost:3002/api/jobs/search \
+  -H 'Content-Type: application/json' \
+  -d '{
     "keywords": "software",
-    "location": "Deutschland"
-  },
-  "enableEnrichment": true,
-  "enableInstantly": true,
-  "enablePipedrive": true
-}
+    "location": "Berlin",
+    "radius": 50,
+    "size": 5,
+    "publishedSince": "30"
+  }' | jq '.data.jobs | map({title, company, contactEmail, contactPhone, externalUrl})'
+```
+- Expected: real `contactEmail`/`contactPhone` when possible; else `externalUrl`.
+
+3) Save jobs to Google Sheets (optional)
+```bash
+curl -s -X POST http://localhost:3002/api/sheets/save-jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"jobs": [{"id":"test","title":"Test","company":"Test GmbH","location":"Berlin","publishedDate":"2025-08-18"}]}' | jq
 ```
 
-#### Schedule Automation
-```http
-POST /api/automation/schedule
-Content-Type: application/json
-
-{
-  "cronPattern": "0 9 * * 1-5",
-  "searchParams": {...},
-  "options": {...}
-}
+4) Stats (Sheets)
+```bash
+curl -s http://localhost:3002/api/sheets/stats | jq
 ```
 
-#### Get Status
-```http
-GET /api/automation/status
+## 📡 API Reference (curl)
+- Search: `POST /api/jobs/search` (see above)
+- Job details: `GET /api/jobs/:id`
+- Sheets save: `POST /api/sheets/save-jobs`
+- Sheets stats: `GET /api/sheets/stats`
+- Automation:
+```bash
+curl -s -X POST http://localhost:3002/api/automation/run -H 'Content-Type: application/json' -d '{"searchParams":{"keywords":"software","location":"Deutschland"}}' | jq
+curl -s http://localhost:3002/api/automation/status | jq
 ```
 
-**Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "isRunning": false,
-    "isScheduled": true,
-    "nextRun": "2024-01-16T09:00:00.000Z",
-    "stats": {
-      "totalRuns": 25,
-      "successfulRuns": 24,
-      "failedRuns": 1,
-      "lastRunStatus": "success"
-    }
-  }
-}
-```
+## 🧠 CAPTCHA & Cookies: What to expect
+- Cookies: multiple strategies including selector variants and double-click; if not visible, scraper proceeds with JS storage flags and forced banner hide.
+- CAPTCHA: image-only capture to 2Captcha; case-sensitive; retries up to several cycles; reloads image when umlauts/ß or empty answer; robust submit; waits for contact section to reveal; immediate DOM extraction with Shadow DOM traversal; strict German phone filtering; unicode whitespace normalization.
 
-### Google Sheets API
+If email/phone still not found, the system returns `externalUrl` instead (no fake data).
 
-#### Save Jobs
-```http
-POST /api/sheets/save-jobs
-Content-Type: application/json
+## 🛠️ Troubleshooting
+- Sheets “Requested entity was not found”:
+  - Check `GOOGLE_SHEETS_SPREADSHEET_ID`, share with service account, correct `GOOGLE_SHEETS_SHEET_TITLE`.
+  - Backend logs will say “Google Sheets disabled” if config missing; that’s OK (frontend will still work).
 
-{
-  "jobs": [...]
-}
-```
+- CAPTCHA not solving:
+  - Verify `TWOCAPTCHA_API_KEY` balance.
+  - Reduce concurrency (already set to batchSize=1 by default during enrichment in the API route).
 
-#### Get Statistics
-```http
-GET /api/sheets/stats
-```
+- Cookie banner blocks:
+  - The scraper attempts multiple selectors and storage flags; try running again or different job if site A/B varies.
 
-## 🔄 Automation Workflow
+- Frontend timeouts/crashes:
+  - Long timeout is configured (20 minutes). UI is wrapped in ErrorBoundary to avoid full crash.
 
-```mermaid
-graph TD
-    A[Schedule Trigger] --> B[Multi-City Job Search]
-    B --> C[Parse & Extract Data]
-    C --> D[Generate Contact Info]
-    D --> E[Save to Google Sheets]
-    E --> F[Apollo Enrichment]
-    F --> G[Add to Instantly Campaign]
-    G --> H[Monitor Responses]
-    H --> I[Create Pipedrive Leads]
-    I --> J[Update Statistics]
-    
-    K[Manual Search] --> C
-    L[Dashboard Monitor] --> M[Real-time Status]
-    
-    style A fill:#e1f5fe
-    style F fill:#f3e5f5
-    style G fill:#e8f5e8
-    style I fill:#fff3e0
-```
-
-### Automation Steps
-
-1. **Job Discovery**
-   - Search across major German cities
-   - Apply intelligent filters
-   - Parse job details and requirements
-
-2. **Data Enhancement**
-   - Extract contact information
-   - Generate company emails
-   - Estimate salary ranges
-   - Create fallback URLs
-
-3. **Storage & Organization**
-   - Batch save to Google Sheets
-   - Deduplicate entries
-   - Update processing status
-
-4. **Contact Enrichment**
-   - Apollo.io contact discovery
-   - Validate email addresses
-   - Find additional contact details
-
-5. **Campaign Management**
-   - Add to Instantly campaigns
-   - Track email performance
-   - Monitor responses
-
-6. **Lead Generation**
-   - Create Pipedrive deals
-   - Set pipeline stages
-   - Track conversion rates
-
-## 🏗️ Architecture
-
-### Project Structure
-```
-product pro/
-├── server/                 # Node.js Backend
-│   ├── routes/            # API endpoints
-│   │   ├── jobs.js        # Job search & management
-│   │   ├── automation.js  # Automation control
-│   │   ├── sheets.js      # Google Sheets integration
-│   │   └── config.js      # Configuration management
-│   ├── services/          # Business logic
-│   │   ├── bundesagenturService.js  # Job API integration
-│   │   ├── googleSheetsService.js   # Sheets operations
-│   │   ├── automationService.js     # Workflow management
-│   │   ├── apolloService.js         # Contact enrichment
-│   │   ├── instantlyService.js      # Email campaigns
-│   │   └── pipedriveService.js      # CRM integration
-│   ├── utils/             # Utilities
-│   │   └── logger.js      # Winston logging
-│   └── index.js           # Express server
-├── client/                # React Frontend
-│   ├── src/
-│   │   ├── components/    # UI components
-│   │   │   ├── Dashboard.tsx        # Main dashboard
-│   │   │   ├── JobSearch.tsx        # Search interface
-│   │   │   ├── AutomationControl.tsx # Automation management
-│   │   │   ├── Statistics.tsx       # Analytics view
-│   │   │   └── Configuration.tsx    # Settings panel
-│   │   ├── services/      # API client
-│   │   │   └── api.ts     # Axios configuration
-│   │   └── App.tsx        # Main application
-├── credentials/           # API credentials (gitignored)
-├── logs/                  # Application logs
-└── README.md
-```
-
-### Technology Stack
-
-**Backend:**
-- **Node.js** with Express.js
-- **Winston** for structured logging
-- **Axios** for HTTP clients
-- **Google APIs** for Sheets integration
-- **Cron** for job scheduling
-
-**Frontend:**
-- **React 19** with TypeScript
-- **Custom CSS** with responsive design
-- **Heroicons** for UI icons
-- **Axios** for API communication
-
-**External APIs:**
-- **Bundesagentur für Arbeit** - Job search
-- **Google Sheets API** - Data storage
-- **Apollo.io API** - Contact enrichment
-- **Instantly.ai API** - Email automation
-- **Pipedrive API** - CRM integration
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-#### ❌ "Google Sheets credentials not found"
-**Solution:**
-1. Verify `credentials/google-sheets-credentials.json` exists
-2. Check service account permissions
-3. Ensure spreadsheet is shared with service account
-
-#### ❌ "API request failed with 400"
-**Solution:**
-1. Check `.env` configuration
-2. Verify API keys are valid
-3. Review request parameters in logs
-
-#### ❌ Frontend shows 0 results
-**Solution:**
-1. Use German keywords for better results
-2. Try broader search terms (e.g., "software" vs "software developer engineer")
-3. Check backend logs for API errors
-
-#### ❌ Automation not running
-**Solution:**
-1. Verify cron pattern syntax
-2. Check automation status in dashboard
-3. Review logs for error messages
-
-### Performance Optimization
-
-**Large Job Datasets:**
-- Use batch processing (200 jobs max per request)
-- Enable request compression
-- Monitor memory usage
-
-**API Rate Limits:**
-- Apollo: 100 requests/minute
-- Instantly: Varies by plan
-- Pipedrive: 100 requests/10 seconds
-
-### Logging
-
-Logs are stored in `logs/` directory:
-- `combined.log` - All log levels
-- `error.log` - Error level only
-
-**Log Levels:** error, warn, info, debug
-
-## 🤝 Contributing
-
-### Development Setup
-
-1. **Fork and clone** the repository
-2. **Install dependencies:** `npm run install-all`
-3. **Set up environment** variables
-4. **Run tests:** `npm test`
-5. **Start development:** `npm run dev`
-
-### Code Standards
-
-- **ESLint** configuration for code quality
-- **TypeScript** for type safety
-- **Winston** for consistent logging
-- **Error handling** with try-catch blocks
-
-### Pull Request Process
-
-1. Create feature branch
-2. Add tests for new functionality
-3. Update documentation
-4. Submit PR with clear description
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **Bundesagentur für Arbeit** for providing the job search API
-- **Google** for Sheets API and cloud services
-- **Apollo.io**, **Instantly.ai**, **Pipedrive** for integration APIs
-- **Open source community** for the amazing tools and libraries
+## 🧪 Local Dev Tips
+- Logs: see `logs/` or console output.
+- Update client API base: `client/env.local` → `REACT_APP_API_URL=http://localhost:3002/api`.
+- Kill stuck server: `kill -9 $(lsof -ti :3002)`.
 
 ---
-
-**⚠️ Important:** This is an MVP version. For production use, implement additional security measures, comprehensive error handling, and monitoring systems.
-
-**🔗 Quick Links:**
-- [Live Demo](#) (Coming soon)
-- [API Documentation](#-api-documentation)
-- [Issue Tracker](../../issues)
-- [Changelog](CHANGELOG.md)
-
-Made with ❤️ for the German job market 
+Made with ❤️ for the German job market. 
