@@ -16,6 +16,9 @@ class AutomationService {
     this.successfulRuns = 0;
     this.failedRuns = 0;
     this.lastRunStatus = 'Never';
+    // Aggregates for stats
+    this.sumJobsProcessed = 0;
+    this.sumContactsEnriched = 0;
     // Multiple cities for comprehensive search
     this.searchCities = [
       'Berlin', 'Hamburg', 'Munich', 'Cologne', 'Frankfurt', 
@@ -27,7 +30,7 @@ class AutomationService {
       keywords: 'software',
       location: 'Deutschland',
       radius: 100,
-      size: 50, // Per city
+      size: 50, // Per city (global cap enforced below)
       publishedSince: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString() // Last 30 days
     };
   }
@@ -62,6 +65,7 @@ class AutomationService {
           jobsFound: 0,
           jobsSaved: 0,
           contactsEnriched: 0,
+          failedEnrichments: 0,
           leadsAdded: 0,
           dealsCreated: 0
         }
@@ -70,6 +74,7 @@ class AutomationService {
       // Step 1: Search for jobs across multiple cities
       try {
         const searchParams = { ...this.defaultSearchParams, ...options.searchParams };
+        const cap = Math.min(parseInt(searchParams.size) || 50, 200);
         let allJobs = [];
         let totalFound = 0;
 
@@ -95,6 +100,12 @@ class AutomationService {
               });
             }
 
+            // Stop early when we have enough jobs collected
+            if (allJobs.length >= cap) {
+              logger.automation.info('Reached desired cap, stopping city search loop', { cap });
+              break;
+            }
+
             // Small delay to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 200));
           } catch (cityError) {
@@ -111,17 +122,20 @@ class AutomationService {
           index === self.findIndex(j => j.id === job.id)
         );
         
+        // Enforce global cap across all cities
+        const cappedJobs = uniqueJobs.slice(0, cap);
+        
         results.steps.jobSearch.status = 'completed';
         results.steps.jobSearch.data = { 
-          jobs: uniqueJobs, 
+          jobs: cappedJobs, 
           totalCount: totalFound,
           citiesSearched: this.searchCities.length
         };
-        results.summary.jobsFound = uniqueJobs.length;
+        results.summary.jobsFound = cappedJobs.length;
 
         logger.automation.info('Multi-city job search completed', { 
-          totalJobs: uniqueJobs.length,
-          uniqueJobs: uniqueJobs.length,
+          totalJobs: cappedJobs.length,
+          uniqueJobs: cappedJobs.length,
           totalFound: totalFound,
           cities: this.searchCities.length
         });
@@ -132,26 +146,8 @@ class AutomationService {
         throw error;
       }
 
-      // Step 2: Save jobs to Google Sheets
-      if (results.steps.jobSearch.data.jobs.length > 0) {
-        try {
-          const sheetsResult = await googleSheetsService.saveJobs(
-            results.steps.jobSearch.data.jobs
-          );
-          
-          results.steps.sheetsStorage.status = 'completed';
-          results.steps.sheetsStorage.data = sheetsResult;
-          results.summary.jobsSaved = sheetsResult.saved;
-
-          logger.automation.info('Jobs saved to Google Sheets', { 
-            saved: sheetsResult.saved 
-          });
-        } catch (error) {
-          results.steps.sheetsStorage.status = 'failed';
-          results.steps.sheetsStorage.error = error.message;
-          logger.automation.error('Failed to save jobs to sheets', { error: error.message });
-        }
-      }
+      // Step 2: (Skipped) Save to sheets will occur AFTER enrichment to include real contacts
+      results.steps.sheetsStorage.status = 'skipped';
 
       // Step 3: Enrich jobs with real contact information
       if (options.enableEnrichment !== false && results.steps.jobSearch.data.jobs.length > 0) {
@@ -160,39 +156,42 @@ class AutomationService {
             jobsToEnrich: results.steps.jobSearch.data.jobs.length
           });
 
-          const enrichedJobs = await contactEnrichmentService.enrichJobs(
-            results.steps.jobSearch.data.jobs,
-            {
-              batchSize: 3, // Smaller batches for better rate limiting
-              delayBetweenBatches: 3000 // 3 second delay between batches
+          const enriched = [];
+          for (const job of results.steps.jobSearch.data.jobs) {
+            try {
+              const enrichedJob = await contactEnrichmentService.enrichJob(job);
+              enriched.push(enrichedJob);
+              results.summary.contactsEnriched++;
+            } catch (error) {
+              results.summary.failedEnrichments = (results.summary.failedEnrichments || 0) + 1;
+              results.errors = results.errors || [];
+              results.errors.push({ jobId: job.id, error: error.message });
             }
-          );
-          
-          // Update jobs in Google Sheets with enrichment data
-          if (enrichedJobs.length > 0) {
-            await this.updateJobsWithEnrichmentData(enrichedJobs);
-          }
-          
-          results.steps.enrichment.status = 'completed';
-          results.steps.enrichment.data = {
-            enrichedJobs,
-            stats: contactEnrichmentService.getEnrichmentStats(enrichedJobs),
-            enrichedContacts: this.extractEnrichedContacts(enrichedJobs)
-          };
-          
-          results.summary.contactsEnriched = enrichedJobs.filter(job => 
-            job.enrichment?.status === 'completed' && job.contactEmail
-          ).length;
 
-          logger.automation.info('Enhanced contact enrichment completed', { 
-            totalJobs: enrichedJobs.length,
-            enrichedSuccessfully: results.summary.contactsEnriched,
-            enrichmentStats: results.steps.enrichment.data.stats
-          });
+            // Respect rate limiting
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+
+          results.steps.enrichment.status = 'completed';
+          results.steps.enrichment.data = { enrichedCount: results.summary.contactsEnriched };
+
+          // Save enriched jobs to Google Sheets
+          try {
+            const saveRes = await googleSheetsService.saveJobs(enriched);
+            results.steps.sheetsStorage.status = 'completed_after_enrichment';
+            results.steps.sheetsStorage.data = saveRes;
+            results.summary.jobsSaved = saveRes.saved;
+            logger.automation.info('Enriched jobs saved to Google Sheets', { saved: saveRes.saved });
+          } catch (e) {
+            results.steps.sheetsStorage.status = 'failed_after_enrichment';
+            results.steps.sheetsStorage.error = e.message;
+            logger.automation.error('Failed to save enriched jobs to sheets', { error: e.message });
+          }
         } catch (error) {
           results.steps.enrichment.status = 'failed';
           results.steps.enrichment.error = error.message;
-          logger.automation.error('Enhanced contact enrichment failed', { error: error.message });
+          logger.automation.error('Contact enrichment failed', { error: error.message });
+          throw error;
         }
       }
 
@@ -239,40 +238,23 @@ class AutomationService {
         }
       }
 
-      const endTime = new Date();
-      results.endTime = endTime.toISOString();
-      results.duration = endTime - startTime;
-
-      this.lastRunTime = endTime;
-
-      // Update statistics
-      this.totalRuns++;
-      this.lastRunTime = new Date().toISOString();
-      
-      if (results.summary.jobsFound > 0) {
-        this.successfulRuns++;
-        this.lastRunStatus = `Found ${results.summary.jobsFound} jobs`;
-      } else {
-        this.failedRuns++;
-        this.lastRunStatus = 'No jobs found';
-      }
-
-      logger.automation.info('Automation workflow completed', { 
-        duration: results.duration,
-        summary: results.summary,
-        totalRuns: this.totalRuns
-      });
+      // Mark run success and update aggregates
+      results.endTime = new Date().toISOString();
+      this.totalRuns += 1;
+      this.successfulRuns += 1;
+      this.lastRunStatus = 'success';
+      this.lastRunTime = results.endTime;
+      this.sumJobsProcessed += results.summary.jobsFound;
+      this.sumContactsEnriched += results.summary.contactsEnriched;
 
       return results;
-    } catch (error) {
-      // Update failure statistics
-      this.totalRuns++;
-      this.failedRuns++;
+    } catch (e) {
+      // Failure path
+      this.totalRuns += 1;
+      this.failedRuns += 1;
+      this.lastRunStatus = 'failed';
       this.lastRunTime = new Date().toISOString();
-      this.lastRunStatus = `Failed: ${error.message}`;
-      
-      logger.automation.error('Automation workflow failed', { error: error.message });
-      throw error;
+      throw e;
     } finally {
       this.isRunning = false;
     }
@@ -561,6 +543,11 @@ class AutomationService {
   getStatus() {
     const isScheduled = this.scheduledJobs.size > 0;
     const nextRun = isScheduled ? this.getNextRunTime() : null;
+    const totalRunsSafe = Math.max(this.totalRuns || 0, 1);
+    const avgJobsPerRun = (this.sumJobsProcessed || 0) / totalRunsSafe;
+    const avgEnrichmentRate = (this.sumContactsEnriched || 0) && (this.sumJobsProcessed || 0)
+      ? ((this.sumContactsEnriched / this.sumJobsProcessed) * 100)
+      : 0;
     
     return {
       isRunning: this.isRunning,
@@ -579,7 +566,10 @@ class AutomationService {
         totalRuns: this.totalRuns || 0,
         successfulRuns: this.successfulRuns || 0,
         failedRuns: this.failedRuns || 0,
-        lastRunStatus: this.lastRunStatus || 'Never'
+        lastRunStatus: this.lastRunStatus || 'Never',
+        avgJobsPerRun: Number(avgJobsPerRun.toFixed(1)),
+        avgEnrichmentRate: Number(avgEnrichmentRate.toFixed(1)),
+        avgConversionRate: 0
       }
     };
   }
@@ -655,12 +645,8 @@ class AutomationService {
       });
 
       await Promise.allSettled(updatePromises);
-      
-      logger.automation.info('Google Sheets enrichment update completed');
     } catch (error) {
-      logger.automation.error('Failed to update sheets with enrichment data', {
-        error: error.message
-      });
+      logger.automation.error('Failed updating enrichment data in sheets', { error: error.message });
     }
   }
 

@@ -154,5 +154,3 @@ If email/phone still not found, the system returns `externalUrl` instead (no fak
 - Update client API base: `client/env.local` → `REACT_APP_API_URL=http://localhost:3002/api`.
 - Kill stuck server: `kill -9 $(lsof -ti :3002)`.
 
----
-Made with ❤️ for the German job market. 

@@ -60,7 +60,12 @@ app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV}`);
-}); 
+});
+
+// Extend server timeouts for long-running enrichment
+server.setTimeout(10800000); // 3 hours
+server.headersTimeout = 10800050;
+server.keepAliveTimeout = 10800050; 
