@@ -9,6 +9,7 @@ class GoogleSheetsService {
     this.spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
     this.credentialsPath = process.env.GOOGLE_SHEETS_CREDENTIALS_PATH;
     this.initialized = false;
+    this.isDisabled = false; // Graceful-disable flag when not configured
   }
 
   /**
@@ -20,9 +21,26 @@ class GoogleSheetsService {
 
       logger.sheets.info('Initializing Google Sheets service');
 
+      // Graceful disable when not configured
+      if (!this.spreadsheetId) {
+        this.isDisabled = true;
+        this.initialized = true;
+        logger.sheets.warn('Google Sheets disabled: GOOGLE_SHEETS_SPREADSHEET_ID is not set');
+        return;
+      }
+      if (!this.credentialsPath) {
+        this.isDisabled = true;
+        this.initialized = true;
+        logger.sheets.warn('Google Sheets disabled: GOOGLE_SHEETS_CREDENTIALS_PATH is not set');
+        return;
+      }
+
       // Check if credentials file exists
-      if (!this.credentialsPath || !fs.existsSync(this.credentialsPath)) {
-        throw new Error('Google Sheets credentials file not found');
+      if (!fs.existsSync(this.credentialsPath)) {
+        this.isDisabled = true;
+        this.initialized = true;
+        logger.sheets.warn('Google Sheets disabled: credentials file not found', { credentialsPath: this.credentialsPath });
+        return;
       }
 
       // Load credentials
@@ -43,7 +61,9 @@ class GoogleSheetsService {
       logger.sheets.info('Google Sheets service initialized successfully');
     } catch (error) {
       logger.sheets.error('Failed to initialize Google Sheets service', { error: error.message });
-      throw error;
+      // Do not throw; disable instead to avoid breaking the app
+      this.isDisabled = true;
+      this.initialized = true;
     }
   }
 
@@ -53,6 +73,9 @@ class GoogleSheetsService {
   async ensureHeaders() {
     try {
       await this.initialize();
+      if (this.isDisabled) {
+        return; // Skip when disabled
+      }
 
       const headers = [
         'ID',
@@ -99,7 +122,10 @@ class GoogleSheetsService {
       }
     } catch (error) {
       logger.sheets.error('Failed to ensure headers', { error: error.message });
-      throw error;
+      if (!this.isDisabled) {
+        // If configured but failing, bubble up; otherwise ignore when disabled
+        throw error;
+      }
     }
   }
 
@@ -111,6 +137,12 @@ class GoogleSheetsService {
   async saveJobs(jobs) {
     try {
       await this.ensureHeaders();
+
+      if (this.isDisabled) {
+        const skipped = Array.isArray(jobs) ? jobs.length : 0;
+        logger.sheets.info('Google Sheets disabled: skipping save', { skipped });
+        return { saved: 0, skipped, errors: 0 };
+      }
 
       if (!jobs || jobs.length === 0) {
         return { saved: 0, skipped: 0, errors: 0 };
@@ -185,6 +217,10 @@ class GoogleSheetsService {
         error: error.message, 
         jobCount: jobs?.length 
       });
+      if (this.isDisabled) {
+        const skipped = Array.isArray(jobs) ? jobs.length : 0;
+        return { saved: 0, skipped, errors: 0 };
+      }
       throw error;
     }
   }
@@ -198,6 +234,7 @@ class GoogleSheetsService {
   async updateJobStatus(jobId, updates) {
     try {
       await this.initialize();
+      if (this.isDisabled) return false;
 
       // Find the job row by ID
       const jobRow = await this.findJobRow(jobId);
@@ -260,6 +297,7 @@ class GoogleSheetsService {
   async updateJobEnrichmentStatus(jobId, enrichmentData) {
     try {
       const range = 'Sheet1!A:Z';
+      if (this.isDisabled) return; // Skip when disabled
       const result = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
         range
@@ -304,6 +342,7 @@ class GoogleSheetsService {
   async getJobsByStatus(status) {
     try {
       await this.initialize();
+      if (this.isDisabled) return [];
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -324,7 +363,7 @@ class GoogleSheetsService {
         status, 
         error: error.message 
       });
-      throw error;
+      return [];
     }
   }
 
@@ -397,6 +436,7 @@ class GoogleSheetsService {
    */
   async findJobRow(jobId) {
     try {
+      if (this.isDisabled) return null;
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
         range: 'A2:A1000' // ID column
@@ -420,6 +460,7 @@ class GoogleSheetsService {
    */
   async getNextEmptyRow() {
     try {
+      if (this.isDisabled) return 2; // Start from row 2 (after headers)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
         range: 'A:A'
@@ -444,6 +485,7 @@ class GoogleSheetsService {
   async getJobByEnrichedEmail(email) {
     try {
       await this.initialize();
+      if (this.isDisabled) return null;
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -478,6 +520,7 @@ class GoogleSheetsService {
   async getTopCompanies(limit = 5) {
     try {
       await this.initialize();
+      if (this.isDisabled) return [];
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -516,6 +559,7 @@ class GoogleSheetsService {
   async getTopLocations(limit = 5) {
     try {
       await this.initialize();
+      if (this.isDisabled) return [];
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -555,6 +599,7 @@ class GoogleSheetsService {
   async getJobsByDate(days = 30) {
     try {
       await this.initialize();
+      if (this.isDisabled) return [];
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
