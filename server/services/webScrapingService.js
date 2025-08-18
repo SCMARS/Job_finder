@@ -118,13 +118,13 @@ class WebScrapingService {
               const resourceType = req.resourceType();
               const isCaptcha = /captcha/i.test(url) || /id-aas-service\/ct\/v1\/captcha/i.test(url);
               if (isCaptcha) return req.continue();
-              // Allow only document, xhr, fetch
-              const allowTypes = new Set(['document', 'xhr', 'fetch', 'other']);
+              // Allow only essential types
+              const allowTypes = new Set(['document', 'xhr', 'fetch', 'script', 'stylesheet', 'other']);
               if (!allowTypes.has(resourceType)) return req.abort();
               // Block common heavy hosts
               if (/(google-analytics|gtag|doubleclick|facebook|hotjar|segment)\./i.test(url)) return req.abort();
               // Block images/fonts/styles explicitly
-              if (/\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|eot|css)(\?|$)/i.test(url)) return req.abort();
+              if (/\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|eot)(\?|$)/i.test(url)) return req.abort();
               return req.continue();
             } catch { try { req.continue(); } catch {} }
           });
@@ -223,7 +223,7 @@ class WebScrapingService {
         (labeledAfterCaptcha.phones||[]).forEach(p => {
           const norm = String(p).replace(/[^\d+]/g,'');
           const garbage = /^([0-9]{1,3}\s+){2,}[0-9]{1,3}$/.test(String(p).trim());
-          if (!garbage && (/^\+49\d{7,15}$/.test(norm) || /^0\d{7,15}$/.test(norm))) { contacts.push({ type:'phone', value:String(p).trim(), source:pageUrlAfter, confidence:'high' }); addedPhones++; }
+          if (!garbage && /^\+49\d{7,15}$/.test(norm)) { contacts.push({ type:'phone', value:String(p).trim(), source:pageUrlAfter, confidence:'high' }); addedPhones++; }
         });
         if (addedEmails || addedPhones) {
           logger.info('✅ Immediate contacts extracted after CAPTCHA', { jobId, emails: addedEmails, phones: addedPhones });
@@ -361,7 +361,7 @@ class WebScrapingService {
         if (c.type === 'phone' && c.value) {
           const norm = String(c.value).replace(/[^\d+]/g, '');
           const garbage = /^([0-9]{1,3}\s+){2,}[0-9]{1,3}$/.test(String(c.value).trim());
-          if (!garbage && (/^\+49\d{7,15}$/.test(norm) || /^0\d{7,15}$/.test(norm))) {
+          if (!garbage && /^\+49\d{7,15}$/.test(norm)) {
             return true;
           }
         }
@@ -1033,7 +1033,7 @@ class WebScrapingService {
             (labeled.phones||[]).forEach(p => {
               const norm = String(p).replace(/[^\d+]/g,'');
               const garbage = /^([0-9]{1,3}\s+){2,}[0-9]{1,3}$/.test(String(p).trim());
-              if (!garbage && (/^\+49\d{7,15}$/.test(norm) || /^0\d{7,15}$/.test(norm))) {
+              if (!garbage && /^\+49\d{7,15}$/.test(norm)) {
                 contacts.push({ type:'phone', value:String(p).trim(), source:pageUrl, confidence:'high' });
               }
             });
