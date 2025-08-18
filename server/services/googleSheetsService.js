@@ -10,6 +10,7 @@ class GoogleSheetsService {
     this.credentialsPath = process.env.GOOGLE_SHEETS_CREDENTIALS_PATH;
     this.initialized = false;
     this.isDisabled = false; // Graceful-disable flag when not configured
+    this.sheetTitle = null; // Resolved sheet title (e.g., 'Sheet1')
   }
 
   /**
@@ -58,6 +59,16 @@ class GoogleSheetsService {
       this.sheets = google.sheets({ version: 'v4', auth });
       this.initialized = true;
 
+      // Resolve first sheet title for A1 ranges
+      try {
+        const meta = await this.sheets.spreadsheets.get({ spreadsheetId: this.spreadsheetId });
+        this.sheetTitle = meta?.data?.sheets?.[0]?.properties?.title || 'Sheet1';
+        logger.sheets.info('Resolved sheet title', { sheetTitle: this.sheetTitle });
+      } catch (e) {
+        this.sheetTitle = 'Sheet1';
+        logger.sheets.warn('Failed to resolve sheet title, defaulting to Sheet1');
+      }
+
       logger.sheets.info('Google Sheets service initialized successfully');
     } catch (error) {
       logger.sheets.error('Failed to initialize Google Sheets service', { error: error.message });
@@ -101,17 +112,19 @@ class GoogleSheetsService {
         'Updated At'
       ];
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       // Check if headers exist
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A1:U1'
+        range: a1('A1:U1')
       });
 
       if (!response.data.values || response.data.values.length === 0) {
         // Add headers if they don't exist
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
-          range: 'A1:U1',
+          range: a1('A1:U1'),
           valueInputOption: 'RAW',
           resource: {
             values: [headers]
@@ -150,6 +163,8 @@ class GoogleSheetsService {
 
       logger.sheets.info('Saving jobs to Google Sheets', { count: jobs.length });
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       // For large datasets, process in batches to avoid API limits
       const BATCH_SIZE = 200;
       let totalSaved = 0;
@@ -165,7 +180,7 @@ class GoogleSheetsService {
           const rows = batch.map(job => this.jobToRow(job));
           
           const nextRow = await this.getNextEmptyRow();
-          const range = `A${nextRow}:U${nextRow + rows.length - 1}`;
+          const range = a1(`A${nextRow}:U${nextRow + rows.length - 1}`);
 
           await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
@@ -193,7 +208,7 @@ class GoogleSheetsService {
         const rows = jobs.map(job => this.jobToRow(job));
         
         const nextRow = await this.getNextEmptyRow();
-        const range = `A${nextRow}:U${nextRow + rows.length - 1}`;
+        const range = a1(`A${nextRow}:U${nextRow + rows.length - 1}`);
 
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
@@ -236,6 +251,8 @@ class GoogleSheetsService {
       await this.initialize();
       if (this.isDisabled) return false;
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       // Find the job row by ID
       const jobRow = await this.findJobRow(jobId);
       if (!jobRow) {
@@ -247,26 +264,26 @@ class GoogleSheetsService {
       
       // Map updates to column positions
       if (updates.enrichedEmail) {
-        updateData.push({ range: `N${jobRow}`, values: [[updates.enrichedEmail]] });
+        updateData.push({ range: a1(`N${jobRow}`), values: [[updates.enrichedEmail]] });
       }
       if (updates.enrichedPhone) {
-        updateData.push({ range: `O${jobRow}`, values: [[updates.enrichedPhone]] });
+        updateData.push({ range: a1(`O${jobRow}`), values: [[updates.enrichedPhone]] });
       }
       if (updates.apolloStatus) {
-        updateData.push({ range: `P${jobRow}`, values: [[updates.apolloStatus]] });
+        updateData.push({ range: a1(`P${jobRow}`), values: [[updates.apolloStatus]] });
       }
       if (updates.instantlyStatus) {
-        updateData.push({ range: `Q${jobRow}`, values: [[updates.instantlyStatus]] });
+        updateData.push({ range: a1(`Q${jobRow}`), values: [[updates.instantlyStatus]] });
       }
       if (updates.pipedriveStatus) {
-        updateData.push({ range: `R${jobRow}`, values: [[updates.pipedriveStatus]] });
+        updateData.push({ range: a1(`R${jobRow}`), values: [[updates.pipedriveStatus]] });
       }
       if (updates.processingStatus) {
-        updateData.push({ range: `S${jobRow}`, values: [[updates.processingStatus]] });
+        updateData.push({ range: a1(`S${jobRow}`), values: [[updates.processingStatus]] });
       }
 
       // Always update the "Updated At" column
-      updateData.push({ range: `U${jobRow}`, values: [[new Date().toISOString()]] });
+      updateData.push({ range: a1(`U${jobRow}`), values: [[new Date().toISOString()]] });
 
       // Batch update
       await this.sheets.spreadsheets.values.batchUpdate({
@@ -296,7 +313,7 @@ class GoogleSheetsService {
    */
   async updateJobEnrichmentStatus(jobId, enrichmentData) {
     try {
-      const range = 'Sheet1!A:Z';
+      const range = `${this.sheetTitle || 'Sheet1'}!A:Z`;
       if (this.isDisabled) return; // Skip when disabled
       const result = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
@@ -311,7 +328,7 @@ class GoogleSheetsService {
       if (jobRowIndex === -1) return;
 
       // Update enrichment columns
-      const updateRange = `Sheet1!N${jobRowIndex + 1}:P${jobRowIndex + 1}`;
+      const updateRange = `${this.sheetTitle || 'Sheet1'}!N${jobRowIndex + 1}:P${jobRowIndex + 1}`;
       const values = [[
         enrichmentData.contactEmail || rows[jobRowIndex][13] || '',
         enrichmentData.contactPhone || rows[jobRowIndex][14] || '',
@@ -344,9 +361,11 @@ class GoogleSheetsService {
       await this.initialize();
       if (this.isDisabled) return [];
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A2:U1000' // Adjust range as needed
+        range: a1('A2:U1000') // Adjust range as needed
       });
 
       if (!response.data.values) {
@@ -437,9 +456,10 @@ class GoogleSheetsService {
   async findJobRow(jobId) {
     try {
       if (this.isDisabled) return null;
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A2:A1000' // ID column
+        range: a1('A2:A1000') // ID column
       });
 
       if (!response.data.values) {
@@ -461,9 +481,10 @@ class GoogleSheetsService {
   async getNextEmptyRow() {
     try {
       if (this.isDisabled) return 2; // Start from row 2 (after headers)
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A:A'
+        range: a1('A:A')
       });
 
       if (!response.data.values) {
@@ -487,9 +508,11 @@ class GoogleSheetsService {
       await this.initialize();
       if (this.isDisabled) return null;
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A2:U1000' // Adjust range as needed
+        range: a1('A2:U1000') // Adjust range as needed
       });
 
       if (!response.data.values) {
@@ -522,9 +545,11 @@ class GoogleSheetsService {
       await this.initialize();
       if (this.isDisabled) return [];
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A2:U1000'
+        range: a1('A2:U1000')
       });
 
       if (!response.data.values) {
@@ -561,9 +586,11 @@ class GoogleSheetsService {
       await this.initialize();
       if (this.isDisabled) return [];
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A2:U1000'
+        range: a1('A2:U1000')
       });
 
       if (!response.data.values) {
@@ -601,9 +628,11 @@ class GoogleSheetsService {
       await this.initialize();
       if (this.isDisabled) return [];
 
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'A2:U1000'
+        range: a1('A2:U1000')
       });
 
       if (!response.data.values) {
