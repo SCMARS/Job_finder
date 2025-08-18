@@ -3,18 +3,18 @@ const logger = require('../utils/logger');
 
 class BundesagenturService {
   constructor() {
-    // Official API endpoint from documentation
+  
     this.baseURL = process.env.BUNDESAGENTUR_API_URL || 'https://rest.arbeitsagentur.de/jobboerse/jobsuche-service';
-    // Official clientId for authentication
+    
     this.clientId = process.env.BUNDESAGENTUR_CLIENT_ID || 'jobboerse-jobsuche';
     this.defaultParams = {
       size: process.env.MAX_RESULTS_PER_SEARCH || 100,
-      page: 1  // API requires page to be >= 1
+      page: 1  
     };
 
-    // English to German city translation map
+    
     this.cityTranslations = {
-      // Major German cities
+     
       'munich': 'München',
       'Munich': 'München',
       'MUNICH': 'München',
@@ -210,6 +210,7 @@ class BundesagenturService {
 
   /**
    * Search for jobs using Bundesagentur official API
+  
    * @param {Object} searchParams - Search parameters
    * @param {string} searchParams.keywords - Keywords to search for (was parameter)
    * @param {string} searchParams.location - Location filter (wo parameter)
@@ -306,10 +307,10 @@ class BundesagenturService {
       applicationDeadline: job.bewerbungsschluss,
       publishedDate: job.aktuelleVeroeffentlichungsdatum,
       externalUrl: job.externeUrl || this.generateJobUrl(job),
-      contactEmail: this.extractContactEmail(job),  // Simple method
-      contactPhone: this.extractContactPhone(job),  // Simple method
+      contactEmail: this.extractContactEmail(job), 
+      contactPhone: this.extractContactPhone(job),  
       salary: this.extractSalary(job),
-      companyWebsite: this.extractCompanyWebsite(job), // Simple method
+      companyWebsite: this.extractCompanyWebsite(job), 
       companyDomain: this.extractCompanyDomain(job),
       companySize: this.extractCompanySize(job),
       industryCategory: this.extractIndustryCategory(job),
@@ -349,9 +350,9 @@ class BundesagenturService {
     
     if (phoneMatch) {
       const phone = phoneMatch[0];
-      // Фильтрируем мусорные номера (job IDs)
+      
       if (phone.match(/^\d{10}-\d$/)) {
-        return null; // Это job ID, не телефон
+        return null; 
       }
       return phone;
     }
@@ -393,13 +394,13 @@ class BundesagenturService {
         contacts.emails = [...new Set(emailMatches)]; // Remove duplicates
       }
 
-      // Extract phone numbers (German format)
+      
       const phoneMatches = html.match(/(?:\+49|0)\s*\d{2,4}[\s\-]?\d{3,9}[\s\-]?\d{1,9}/g);
       if (phoneMatches) {
         contacts.phones = [...new Set(phoneMatches.map(phone => phone.replace(/\s+/g, ' ').trim()))];
       }
 
-      // Extract contact person name
+      
       const contactPersonMatch = html.match(/(?:Herr|Frau)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)*)/);
       if (contactPersonMatch) {
         contacts.contactPerson = contactPersonMatch[0];
