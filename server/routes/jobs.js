@@ -222,16 +222,16 @@ router.post('/search', async (req, res) => {
       if (results.jobs.length <= 5) {
         // Малое количество - быстрая обработка
         enrichmentOptions.batchSize = 3;
-        enrichmentOptions.delayBetweenBatches = 2000;
+        enrichmentOptions.delayBetweenBatches = 1000;
       } else if (results.jobs.length <= 15) {
         // Среднее количество - осторожная обработка
-        enrichmentOptions.batchSize = 2;
-        enrichmentOptions.delayBetweenBatches = 4000;
+        enrichmentOptions.batchSize = 3;
+        enrichmentOptions.delayBetweenBatches = 1500;
       } else {
-        // Большое количество - очень осторожная обработка
-        enrichmentOptions.batchSize = 1; // По одной!
-        enrichmentOptions.delayBetweenBatches = 6000;
-        logger.jobs.warn('Large job batch detected, using conservative enrichment', {
+        // Большое количество - ускоренная обработка с контролем капчи
+        enrichmentOptions.batchSize = 4;
+        enrichmentOptions.delayBetweenBatches = 500;
+        logger.jobs.warn('Large job batch detected, using accelerated enrichment', {
           jobCount: results.jobs.length
         });
       }

@@ -313,8 +313,8 @@ class ContactEnrichmentService {
    */
   async enrichJobs(jobs, options = {}) {
     // Для больших объемов используем меньший batch size
-    const defaultBatchSize = jobs.length > 10 ? 2 : 3; // Максимум 2-3 одновременно
-    const defaultDelay = jobs.length > 10 ? 5000 : 3000; // Больше задержка для больших объемов
+    const defaultBatchSize = jobs.length > 10 ? 3 : 3; // держим 3 по умолчанию
+    const defaultDelay = jobs.length > 10 ? 1500 : 800; // ускоряем задержки
     
     const { 
       batchSize = defaultBatchSize, 

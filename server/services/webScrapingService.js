@@ -8,7 +8,7 @@ class WebScrapingService {
     this.browser = null;
     this.userAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
     // Simple in-process pool limiter for page scrapes
-    this.maxConcurrentScrapes = 6;
+    this.maxConcurrentScrapes = parseInt(process.env.PUPPETEER_MAX_SCRAPES || '8');
     this.currentScrapes = 0;
     this.scrapeQueue = [];
   }
