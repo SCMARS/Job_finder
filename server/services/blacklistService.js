@@ -7,12 +7,7 @@ class BlacklistService {
 		this.configDir = path.join(__dirname, '..', 'config');
 		this.filePath = path.join(this.configDir, 'blacklist.json');
 		this.list = [];
-		this.defaults = [
-			'zeitarbeit',
-			'arbeitnehmerüberlassung',
-			'personaldienstleistung',
-			'leiharbeit'
-		];
+		this.defaults = [];
 		this._load();
 	}
 
@@ -28,14 +23,9 @@ class BlacklistService {
 					this.list = parsed.map(s => String(s).toLowerCase().trim()).filter(Boolean);
 				}
 			}
-			// Ensure defaults present at least once
-			if (this.list.length === 0) {
-				this.list = [...new Set(this.defaults)];
-				this._save();
-			}
 		} catch (error) {
 			logger.error('Failed to load blacklist', { error: error.message });
-			this.list = [...new Set(this.defaults)];
+			this.list = [];
 		}
 	}
 
@@ -55,9 +45,6 @@ class BlacklistService {
 	setList(terms) {
 		if (!Array.isArray(terms)) return this.getList();
 		this.list = [...new Set(terms.map(s => String(s).toLowerCase().trim()).filter(Boolean))];
-		if (this.list.length === 0) {
-			this.list = [...new Set(this.defaults)];
-		}
 		this._save();
 		return this.getList();
 	}
