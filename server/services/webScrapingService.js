@@ -808,7 +808,7 @@ class WebScrapingService {
 
       // Прокручиваем к CAPTCHA элементу и ждем полной загрузки
       await captchaElement.scrollIntoView();
-      await new Promise(resolve => setTimeout(resolve, 3000)); // Ждем дольше для полной загрузки
+      await new Promise(resolve => setTimeout(resolve, 1500)); // Ускоренное ожидание загрузки
       
       // Проверяем размеры элемента перед скриншотом
       const elementSize = await captchaElement.evaluate(el => {
@@ -1211,6 +1211,7 @@ class WebScrapingService {
       }
 
       // СТРАТЕГИЯ 2: LocalStorage и SessionStorage
+      let consentPreSet = false;
       try {
         await page.evaluate(() => {
           const storageItems = [
@@ -1233,15 +1234,17 @@ class WebScrapingService {
           console.log('✅ Storage данные установлены');
         });
         logger.info('✅ LocalStorage и SessionStorage настроены', { jobId });
+        consentPreSet = true;
       } catch (storageError) {
         logger.info('⚠️ Storage настроить не удалось', { jobId });
       }
 
       // СТРАТЕГИЯ 3: Ждем появления cookie модали с увеличенным таймаутом
       let cookieModalFound = false;
+      const maxCookieAttempts = parseInt(process.env.COOKIE_MODAL_MAX_ATTEMPTS || (consentPreSet ? '4' : '8'));
       
-      for (let attempt = 0; attempt < 15; attempt++) { // Увеличил до 15 попыток
-        console.log(`🔍 Расширенный поиск cookie modal ${attempt + 1}/15...`);
+      for (let attempt = 0; attempt < maxCookieAttempts; attempt++) {
+        console.log(`🔍 Расширенный поиск cookie modal ${attempt + 1}/${maxCookieAttempts}...`);
         
         // Прокручиваем страницу вверх и вниз для поиска модали
         if (attempt % 3 === 0) {
