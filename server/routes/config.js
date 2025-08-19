@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const logger = require('../utils/logger');
+const blacklistService = require('../services/blacklistService');
 
 /**
  * GET /api/config
@@ -48,6 +49,52 @@ router.get('/', async (req, res) => {
       message: error.message
     });
   }
+});
+
+/**
+ * Blacklist management
+ */
+router.get('/blacklist', (req, res) => {
+	try {
+		const list = blacklistService.getList();
+		res.json({ success: true, data: list });
+	} catch (error) {
+		logger.error('Failed to get blacklist', { error: error.message });
+		res.status(500).json({ success: false, error: 'Failed to get blacklist', message: error.message });
+	}
+});
+
+router.post('/blacklist', (req, res) => {
+	try {
+		const { terms } = req.body;
+		const list = blacklistService.setList(Array.isArray(terms) ? terms : []);
+		res.json({ success: true, data: list });
+	} catch (error) {
+		logger.error('Failed to set blacklist', { error: error.message });
+		res.status(500).json({ success: false, error: 'Failed to set blacklist', message: error.message });
+	}
+});
+
+router.post('/blacklist/add', (req, res) => {
+	try {
+		const { term } = req.body;
+		const list = blacklistService.add(term);
+		res.json({ success: true, data: list });
+	} catch (error) {
+		logger.error('Failed to add to blacklist', { error: error.message });
+		res.status(500).json({ success: false, error: 'Failed to add to blacklist', message: error.message });
+	}
+});
+
+router.post('/blacklist/remove', (req, res) => {
+	try {
+		const { term } = req.body;
+		const list = blacklistService.remove(term);
+		res.json({ success: true, data: list });
+	} catch (error) {
+		logger.error('Failed to remove from blacklist', { error: error.message });
+		res.status(500).json({ success: false, error: 'Failed to remove from blacklist', message: error.message });
+	}
 });
 
 /**

@@ -3,6 +3,7 @@ const router = express.Router();
 const bundesagenturService = require('../services/bundesagenturService');
 const contactEnrichmentService = require('../services/contactEnrichmentService'); // Add this
 const logger = require('../utils/logger');
+const blacklistService = require('../services/blacklistService');
 
 /**
  * GET & POST /api/jobs/search
@@ -41,6 +42,16 @@ const searchJobs = async (req, res) => {
     if (results.jobs && results.jobs.length > requestedSize) {
       logger.jobs.info(`Limiting results from ${results.jobs.length} to ${requestedSize}`, { searchParams });
       results.jobs = results.jobs.slice(0, requestedSize);
+    }
+
+    // Apply blacklist filter by company name
+    if (results.jobs && results.jobs.length > 0) {
+      const before = results.jobs.length;
+      results.jobs = results.jobs.filter(j => !blacklistService.isBlockedCompany(j.company));
+      const removed = before - results.jobs.length;
+      if (removed > 0) {
+        logger.jobs.info('Filtered jobs by blacklist', { removed, remaining: results.jobs.length });
+      }
     }
 
     // КРИТИЧЕСКИЙ FIX: включаем enrichment для извлечения контактов
@@ -189,6 +200,16 @@ router.post('/search', async (req, res) => {
     const results = await bundesagenturService.searchJobs(searchParams);
     
     // Step 2: Enrich with real contacts if enabled and we have jobs
+    if (results.jobs && results.jobs.length > 0) {
+      // Apply blacklist filter first
+      const before = results.jobs.length;
+      results.jobs = results.jobs.filter(j => !blacklistService.isBlockedCompany(j.company));
+      const removed = before - results.jobs.length;
+      if (removed > 0) {
+        logger.jobs.info('Filtered jobs by blacklist', { removed, remaining: results.jobs.length });
+      }
+    }
+
     if (enableEnrichment && results.jobs && results.jobs.length > 0) {
       logger.jobs.info('Starting contact enrichment', { jobCount: results.jobs.length });
       
