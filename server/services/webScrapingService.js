@@ -1,5 +1,7 @@
 const puppeteer = require('puppeteer');
 const axios = require('axios');
+const http = require('http');
+const https = require('https');
 const logger = require('../utils/logger');
 const captchaService = require('./captchaService');
 
@@ -11,6 +13,15 @@ class WebScrapingService {
     this.maxConcurrentScrapes = parseInt(process.env.PUPPETEER_MAX_SCRAPES || '8');
     this.currentScrapes = 0;
     this.scrapeQueue = [];
+    // Reusable page pool
+    this.pagePool = [];
+    this.maxPagePoolSize = parseInt(process.env.PUPPETEER_PAGE_POOL || String(this.maxConcurrentScrapes));
+    // Keep-alive HTTP(S) for faster CAPTCHA image downloads
+    this.http = axios.create({
+      httpAgent: new http.Agent({ keepAlive: true }),
+      httpsAgent: new https.Agent({ keepAlive: true }),
+      timeout: 20000
+    });
   }
 
   async _acquireSlot() {
@@ -75,6 +86,64 @@ class WebScrapingService {
     }
   }
 
+  async preparePage(page) {
+    if (page.__prepared) return page;
+    try { await page.setDefaultTimeout(60000); } catch {}
+    try { await page.setDefaultNavigationTimeout(90000); } catch {}
+    try {
+      await page.setRequestInterception(true);
+      page.on('request', (req) => {
+        try {
+          const url = req.url();
+          const resourceType = req.resourceType();
+          const isCaptcha = /captcha/i.test(url) || /id-aas-service\/ct\/v1\/captcha/i.test(url);
+          if (isCaptcha) return req.continue();
+          const allowTypes = new Set(['document', 'xhr', 'fetch', 'script', 'stylesheet', 'other']);
+          if (!allowTypes.has(resourceType)) return req.abort();
+          if (/(google-analytics|gtag|doubleclick|facebook|hotjar|segment)\./i.test(url)) return req.abort();
+          if (/\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|eot)(\?|$)/i.test(url)) return req.abort();
+          return req.continue();
+        } catch { try { req.continue(); } catch {} }
+      });
+    } catch {}
+    await page.setUserAgent(this.userAgent);
+    await page.setViewport({ width: 1920, height: 1080 });
+    await page.setExtraHTTPHeaders({
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+      'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Cache-Control': 'max-age=0',
+      'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"macOS"',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'none',
+      'sec-fetch-user': '?1',
+    });
+    page.__prepared = true;
+    return page;
+  }
+
+  async getPage(browser) {
+    let page = this.pagePool.pop();
+    if (!page) {
+      page = await browser.newPage();
+    }
+    await this.preparePage(page);
+    return page;
+  }
+
+  async releasePage(page) {
+    try {
+      if (this.pagePool.length < this.maxPagePoolSize) {
+        this.pagePool.push(page);
+      } else {
+        await page.close();
+      }
+    } catch {}
+  }
+
   /**
    * Scrape Arbeitsagentur job page for contact information
    */
@@ -92,83 +161,34 @@ class WebScrapingService {
       logger.info('Initializing browser for CAPTCHA testing', { jobId });
       const browser = await this.initBrowser();
       
-      // Check if we already have a page with this job open
-      const pages = await browser.pages();
-      let page = pages.find(p => p.url().includes(jobId));
-      
-      if (page) {
-        logger.info('Found existing page with job', { 
-          jobId,
-          url: page.url().substring(0, 100)
-        });
-      } else {
-        // Always create a new page for each job to get individual contacts
-        logger.info('Creating new page for individual job extraction', { jobId });
-        page = await browser.newPage();
-        // Set default page timeouts to be generous for CAPTCHA flows
-        try { await page.setDefaultTimeout(60000); } catch {}
-        try { await page.setDefaultNavigationTimeout(90000); } catch {}
-        
-        // Network interception: block heavy resources
-        try {
-          await page.setRequestInterception(true);
-          page.on('request', (req) => {
-            try {
-              const url = req.url();
-              const resourceType = req.resourceType();
-              const isCaptcha = /captcha/i.test(url) || /id-aas-service\/ct\/v1\/captcha/i.test(url);
-              if (isCaptcha) return req.continue();
-              // Allow only essential types
-              const allowTypes = new Set(['document', 'xhr', 'fetch', 'script', 'stylesheet', 'other']);
-              if (!allowTypes.has(resourceType)) return req.abort();
-              // Block common heavy hosts
-              if (/(google-analytics|gtag|doubleclick|facebook|hotjar|segment)\./i.test(url)) return req.abort();
-              // Block images/fonts/styles explicitly
-              if (/\.(png|jpe?g|gif|webp|svg|ico|woff2?|ttf|otf|eot)(\?|$)/i.test(url)) return req.abort();
-              return req.continue();
-            } catch { try { req.continue(); } catch {} }
-          });
-        } catch {}
-        
-        // Set user agent and headers
-      await page.setUserAgent(this.userAgent);
-      await page.setViewport({ width: 1920, height: 1080 });
+      // Reuse a prepared page from pool
+      let page = await this.getPage(browser);
+      await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+      logger.info('🎯 NEW PAGE OPENED for job! Starting automated processing...', {
+        jobId,
+        url: url.substring(0, 100),
+        instructions: [
+          '1. Browser session is persistent',
+          '2. Will handle cookies automatically', 
+          '3. Will solve CAPTCHA via 2Captcha',
+          '4. Will extract real contacts only'
+        ]
+      });
 
-        // Set headers to look more like real browser
-        await page.setExtraHTTPHeaders({
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-          'Accept-Language': 'de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7',
-          'Accept-Encoding': 'gzip, deflate, br',
-          'Cache-Control': 'max-age=0',
-          'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-          'sec-ch-ua-mobile': '?0',
-          'sec-ch-ua-platform': '"macOS"',
-          'sec-fetch-dest': 'document',
-          'sec-fetch-mode': 'navigate',
-          'sec-fetch-site': 'none',
-          'sec-fetch-user': '?1',
+      // Early external link short-circuit
+      try {
+        const earlyExternal = await page.evaluate(() => {
+          const links = Array.from(document.querySelectorAll('a'));
+          const hit = links.find(a => /Externe Seite öffnen|Über Internetseite des Arbeitgebers/i.test((a.textContent || '')));
+          return hit ? (hit.getAttribute('href') || hit.href || null) : null;
         });
-
-        // Navigate to job page
-        await page.goto(url, {
-          waitUntil: 'networkidle0',
-          timeout: 30000
-        });
-        
-        logger.info('🎯 NEW PAGE OPENED for job! Starting automated processing...', {
-          jobId,
-          url: url.substring(0, 100),
-          instructions: [
-            '1. Browser session is persistent',
-            '2. Will handle cookies automatically', 
-            '3. Will solve CAPTCHA via 2Captcha',
-            '4. Will extract real contacts only'
-          ]
-        });
-        
-        // Wait less time since cookies are already accepted
-        await new Promise(resolve => setTimeout(resolve, 5000)); // 5 seconds instead of 30
-      }
+        if (earlyExternal) {
+          logger.info('🔗 Early external link detected, short-circuiting', { jobId, externalUrl: earlyExternal });
+          await this.releasePage(page);
+          this._releaseSlot();
+          return [{ type: 'external_link', value: earlyExternal, confidence: 'high' }];
+        }
+      } catch {}
 
       // Сначала обрабатываем cookies, потом CAPTCHA
       const browserPages = await browser.pages();
@@ -351,7 +371,7 @@ class WebScrapingService {
         telefonPatterns: (content.match(/(Telefon|Tel|Phone|Fon):\s*[\+\d\s\-\(\)]{8,20}/gi) || []).map(p => p.substring(0, 50))
       });
 
-      // Defer page close until after fallback external link extraction to avoid context destruction
+      // Defer page release into pool until after fallback external link extraction to avoid context destruction
 
       // Если не нашли реальные контакты (email/phone), ищем внешнюю ссылку
       const hasRealContacts = contacts.some(c => {
@@ -432,8 +452,8 @@ class WebScrapingService {
       const currentPages = await browser.pages();
       if (currentPages.length > 8 && process.env.PUPPETEER_CLOSE_TABS === 'true') { // Close only if explicitly allowed by env
         try {
-          await page.close();
-          logger.info('Page closed after extraction to free resources', { jobId, totalPages: currentPages.length });
+      await this.releasePage(page);
+          logger.info('Page released to pool after extraction', { jobId });
         } catch (e) {
           logger.warn('Page close skipped due to context', { jobId, error: (e && e.message) ? e.message : String(e) });
         }
@@ -552,8 +572,8 @@ class WebScrapingService {
           contacts.push({ type: 'phone', value: phone, source: sourceUrl, confidence: 'medium' });
         }
       });
- 
-      return contacts;
+
+    return contacts;
     } catch (error) {
       return contacts;
     }
@@ -865,7 +885,7 @@ class WebScrapingService {
         try {
           const src = await captchaElement.evaluate(el => el.getAttribute('src'));
           if (src && src.startsWith('http')) {
-            const resp = await axios.get(src, { responseType: 'arraybuffer' });
+            const resp = await this.http.get(src, { responseType: 'arraybuffer' });
             captchaScreenshot = Buffer.from(resp.data);
             logger.info(`📥 [CAPTCHA attempt #${attemptIndex}] downloaded by URL, bytes=${captchaScreenshot.length}`, { jobId });
           }
@@ -1009,7 +1029,7 @@ class WebScrapingService {
               const out = { emails: [], phones: [] };
               const root = document.querySelector('#jobdetails-kontaktdaten-block') || document.body;
               if (!root) return out;
-              const seen = new Set();
+    const seen = new Set();
               const pushUnique = (arr, val) => { const v = String(val || '').trim(); if (v && !seen.has(v)) { seen.add(v); arr.push(v); } };
               const walk = (node) => {
                 const anchors = node.querySelectorAll ? node.querySelectorAll('a[href^="mailto:"], a[href^="tel:"]') : [];
@@ -1052,7 +1072,7 @@ class WebScrapingService {
                 if (typeof form.requestSubmit === 'function') form.requestSubmit(); else form.submit();
                 return true;
               }
-              return false;
+        return false;
             });
             if (submitted) {
               logger.info('🔘 Родительская форма отправлена программно', { jobId });
@@ -1083,7 +1103,7 @@ class WebScrapingService {
                 try {
                   await page.waitForFunction(() => !!(document.querySelector('a[href^="mailto:"]') || document.querySelector('a[href^="tel:"]')), { timeout: 5000 });
                 } catch {}
-                return true;
+      return true;
               }
               // upper-case попытка
               await captchaInputAlt.evaluate(el => el.value = '');
@@ -1128,7 +1148,7 @@ class WebScrapingService {
             try {
               const src2 = await newCaptchaEl.evaluate(el => el.getAttribute('src'));
               if (src2 && src2.startsWith('http')) {
-                const resp2 = await axios.get(src2, { responseType: 'arraybuffer' });
+                const resp2 = await this.http.get(src2, { responseType: 'arraybuffer' });
                 buf = Buffer.from(resp2.data);
               }
             } catch {}
@@ -1502,7 +1522,7 @@ class WebScrapingService {
                 }
               }
             }
-            return false;
+      return false;
           });
         }
         
