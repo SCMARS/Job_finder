@@ -59,12 +59,21 @@ const searchJobs = async (req, res) => {
       logger.jobs.info('Starting contact enrichment', { jobCount: results.jobs.length });
       
       try {
-                  const enrichmentOptions = {
+                  let enrichmentOptions = {
           useWebScraping: true,
-          useApollo: false,
-          batchSize: 1,
-          delayBetweenBatches: 5000
+          useApollo: false
         };
+        const jobCount = results.jobs.length;
+        if (jobCount <= 5) {
+          enrichmentOptions.batchSize = 3;
+          enrichmentOptions.delayBetweenBatches = 1000;
+        } else if (jobCount <= 15) {
+          enrichmentOptions.batchSize = 3;
+          enrichmentOptions.delayBetweenBatches = 1500;
+        } else {
+          enrichmentOptions.batchSize = 4;
+          enrichmentOptions.delayBetweenBatches = 500;
+        }
       
         results.jobs = await contactEnrichmentService.enrichJobs(results.jobs, enrichmentOptions);
         logger.jobs.info('Contact enrichment completed', { 
