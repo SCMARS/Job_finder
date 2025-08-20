@@ -144,7 +144,7 @@ class GoogleSheetsService {
       logger.sheets.error('Failed to ensure headers', { error: error.message });
       if (!this.isDisabled) {
         // If configured but failing, bubble up; otherwise ignore when disabled
-        throw error;
+      throw error;
       }
     }
   }

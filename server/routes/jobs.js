@@ -33,33 +33,78 @@ const searchJobs = async (req, res) => {
       size: Math.min(parseInt(params.size) || 50, 200) // Max 200 results per request
     };
 
+    const requestedSize = parseInt(params.size) || 50;
+    const startTs = Date.now();
+
     logger.jobs.info('Job search request', { searchParams, ip: req.ip, method: req.method });
 
-    const results = await bundesagenturService.searchJobs(searchParams);
-    
-    // КРИТИЧЕСКИЙ FIX: ограничиваем количество jobs по запрошенному size
-    const requestedSize = parseInt(params.size) || 50;
-    if (results.jobs && results.jobs.length > requestedSize) {
-      logger.jobs.info(`Limiting results from ${results.jobs.length} to ${requestedSize}`, { searchParams });
-      results.jobs = results.jobs.slice(0, requestedSize);
-    }
+    // Fetch pages until we have at least requestedSize after blacklist filtering
+    let aggregatedJobs = [];
+    let currentPage = searchParams.page;
+    let totalCount = 0;
+    let pagesFetched = 0;
+    const perPage = searchParams.size;
 
-    // Apply blacklist filter by company name
-    if (results.jobs && results.jobs.length > 0) {
-      const before = results.jobs.length;
-      results.jobs = results.jobs.filter(j => !blacklistService.isBlockedCompany(j.company));
-      const removed = before - results.jobs.length;
-      if (removed > 0) {
-        logger.jobs.info('Filtered jobs by blacklist', { removed, remaining: results.jobs.length });
+    while (aggregatedJobs.length < requestedSize) {
+      const pageResults = await bundesagenturService.searchJobs({ ...searchParams, page: currentPage, size: perPage });
+      pagesFetched += 1;
+      totalCount = pageResults.totalCount || totalCount;
+
+      let pageJobs = pageResults.jobs || [];
+      // Apply blacklist filter by company name
+      if (pageJobs.length > 0) {
+        const before = pageJobs.length;
+        pageJobs = pageJobs.filter(j => !blacklistService.isBlockedCompany(j.company));
+        const removed = before - pageJobs.length;
+        if (removed > 0) {
+          logger.jobs.info('Filtered jobs by blacklist (page level)', { removed, remaining: pageJobs.length, page: currentPage });
+        }
       }
+
+      aggregatedJobs = aggregatedJobs.concat(pageJobs);
+
+      // Stop if this page returned less than perPage (no more pages)
+      if (!pageResults.jobs || pageResults.jobs.length < perPage) {
+        logger.jobs.info('No more pages available from source', { currentPage, perPage, aggregated: aggregatedJobs.length });
+        break;
+      }
+      
+      // Stop if we likely reached the end by totalCount
+      const maxPages = perPage > 0 ? Math.ceil((totalCount || 0) / perPage) : 1;
+      if (currentPage >= maxPages) {
+        break;
+      }
+
+      currentPage += 1;
+
+      // Small delay to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 150));
     }
 
-    // КРИТИЧЕСКИЙ FIX: включаем enrichment для извлечения контактов
+    // Enforce requested size cap after aggregation
+    const cappedJobs = aggregatedJobs.slice(0, requestedSize);
+
+    // Prepare results object consistent with previous response shape
+    const results = {
+      jobs: cappedJobs,
+      totalCount: totalCount,
+      page: searchParams.page,
+      searchParams: searchParams,
+      timestamp: new Date().toISOString(),
+      meta: {
+        requestedSize,
+        returnedCount: cappedJobs.length,
+        pagesFetched,
+        durationMs: Date.now() - startTs
+      }
+    };
+
+    // Contact enrichment (kept as before)
     if (results.jobs && results.jobs.length > 0) {
       logger.jobs.info('Starting contact enrichment', { jobCount: results.jobs.length });
       
       try {
-                  let enrichmentOptions = {
+        let enrichmentOptions = {
           useWebScraping: true,
           useApollo: false
         };
@@ -84,14 +129,14 @@ const searchJobs = async (req, res) => {
           error: enrichmentError.message,
           jobCount: results.jobs.length 
         });
-        // Продолжаем без enrichment
+        // Continue without enrichment
       }
     }
     
     res.json({
       success: true,
       data: results,
-      message: `Found ${results.totalCount} jobs, returned ${results.jobs.length} (limited to ${requestedSize}, enriched)`
+      message: `Found ${totalCount} jobs, returned ${results.jobs.length} (target ${requestedSize}, pages ${results.meta.pagesFetched}, ${results.meta.durationMs}ms)`
     });
   } catch (error) {
     logger.jobs.error('Job search failed', { 

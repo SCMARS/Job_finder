@@ -63,7 +63,7 @@ app.use('*', (req, res) => {
 const server = app.listen(PORT, () => {
   logger.info(`Server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV}`);
-});
+}); 
 
 // Extend server timeouts for long-running enrichment
 server.setTimeout(10800000); // 3 hours

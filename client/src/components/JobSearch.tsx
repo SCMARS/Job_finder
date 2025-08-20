@@ -42,6 +42,7 @@ const JobSearch: React.FC = () => {
   const [saveToSheetsAuto, setSaveToSheetsAuto] = useState(true);
   const [blacklist, setBlacklist] = useState<string[]>([]);
   const [newBlockedTerm, setNewBlockedTerm] = useState('');
+  const [lastDurationMs, setLastDurationMs] = useState<number | null>(null);
 
   // Safely format dates to avoid crashing on invalid values
   const formatDate = (value?: string) => {
@@ -119,6 +120,7 @@ const JobSearch: React.FC = () => {
   const handleSearch = async () => {
     setLoading(true);
     setError(null);
+    setLastDurationMs(null);
     
     try {
       console.log('Starting job search with params:', searchParams);
@@ -137,6 +139,7 @@ const JobSearch: React.FC = () => {
         const visible = items.filter(j => !isBlocked(j.company));
         setJobs(visible);
         setLastSearchTime(new Date().toLocaleString());
+        setLastDurationMs(response.data.data?.meta?.durationMs ?? null);
         setSelectedJobs(new Set());
         
         // Auto-save to Google Sheets if enabled
@@ -411,7 +414,7 @@ const JobSearch: React.FC = () => {
 
         {lastSearchTime && (
           <div className="alert alert-info" style={{ marginTop: '16px' }}>
-            <strong>ℹ️ Last search:</strong> {lastSearchTime} • Found {jobs.length} jobs
+            <strong>ℹ️ Last search:</strong> {lastSearchTime} • Found {jobs.length} jobs{typeof lastDurationMs === 'number' ? ` • Took ${lastDurationMs} ms` : ''}
           </div>
         )}
       </div>

@@ -171,7 +171,7 @@ class AutomationService {
             // Respect rate limiting
             await new Promise(resolve => setTimeout(resolve, 500));
           }
-
+          
           results.steps.enrichment.status = 'completed';
           results.steps.enrichment.data = { enrichedCount: results.summary.contactsEnriched };
 

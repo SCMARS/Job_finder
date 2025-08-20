@@ -108,22 +108,22 @@ const Statistics: React.FC = () => {
         setError('Failed to load statistics');
         // Keep any cached stats already shown; if none, set defaults
         if (!stats) {
-          setStats({
-            total: 0,
-            byStatus: { new: 0, enriched: 0, inCampaign: 0, converted: 0, error: 0 },
-            byDate: [],
-            conversionRate: 0,
-            topCompanies: [],
-            topLocations: [],
-            automationStats: {
-              totalRuns: 0,
-              successfulRuns: 0,
-              failedRuns: 0,
-              avgJobsPerRun: 0,
-              avgEnrichmentRate: 0,
-              avgConversionRate: 0
-            }
-          });
+        setStats({
+          total: 0,
+          byStatus: { new: 0, enriched: 0, inCampaign: 0, converted: 0, error: 0 },
+          byDate: [],
+          conversionRate: 0,
+          topCompanies: [],
+          topLocations: [],
+          automationStats: {
+            totalRuns: 0,
+            successfulRuns: 0,
+            failedRuns: 0,
+            avgJobsPerRun: 0,
+            avgEnrichmentRate: 0,
+            avgConversionRate: 0
+          }
+        });
         }
       }
     } finally {

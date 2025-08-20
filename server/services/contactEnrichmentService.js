@@ -139,15 +139,26 @@ class ContactEnrichmentService {
                                 !phoneContact.value.match(/^\d+\s\d+\s\d+/) && 
                                 phoneContact.value.length > 7;
             
+            // Приоритет: реальные контакты > внешние ссылки
             if (externalLinkContact && !hasRealEmail && !hasRealPhone) {
+              // Только если нет реальных контактов, используем внешнюю ссылку
               enrichmentResult.contactEmail = externalLinkContact.value;
               enrichmentResult.contactType = 'external_link';
-              logger.info('🔗 Присвоена внешняя ссылка как контакт', { 
+              logger.info('🔗 Присвоена внешняя ссылка как контакт (fallback)', { 
                 jobId: job.id, 
                 externalLink: enrichmentResult.contactEmail ? enrichmentResult.contactEmail.substring(0, 50) + '...' : 'undefined',
                 hasRealEmail,
                 hasRealPhone,
                 phoneContactValue: phoneContact?.value?.substring(0, 20)
+              });
+            } else if (hasRealEmail || hasRealPhone) {
+              // Если есть реальные контакты, НЕ используем внешнюю ссылку
+              logger.info('✅ Реальные контакты найдены, внешняя ссылка не используется', {
+                jobId: job.id,
+                hasRealEmail,
+                hasRealPhone,
+                realEmail: emailContact?.value?.substring(0, 30),
+                realPhone: phoneContact?.value?.substring(0, 20)
               });
             }
             

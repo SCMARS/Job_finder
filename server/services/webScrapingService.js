@@ -182,11 +182,11 @@ class WebScrapingService {
           const hit = links.find(a => /Externe Seite öffnen|Über Internetseite des Arbeitgebers/i.test((a.textContent || '')));
           return hit ? (hit.getAttribute('href') || hit.href || null) : null;
         });
+        
+        // НЕ прерываем поиск сразу - сначала ищем реальные контакты
         if (earlyExternal) {
-          logger.info('🔗 Early external link detected, short-circuiting', { jobId, externalUrl: earlyExternal });
-          await this.releasePage(page);
-          this._releaseSlot();
-          return [{ type: 'external_link', value: earlyExternal, confidence: 'high' }];
+          logger.info('🔗 External link detected, but continuing to search for real contacts first', { jobId, externalUrl: earlyExternal });
+          // Сохраняем ссылку для fallback, но продолжаем поиск
         }
       } catch {}
 
