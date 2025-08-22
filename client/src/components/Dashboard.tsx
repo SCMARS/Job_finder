@@ -64,11 +64,11 @@ const Dashboard: React.FC<TabProps> = ({ activeTab, setActiveTab }) => {
         api.get('/config').catch(() => ({ data: null }))
       ]);
       
-      // Process real data from APIs
+     
       const sheetsData = sheetsResponse.data?.data;
       const automationData = automationResponse.data?.data;
       
-      // Generate recent activity based on real data
+     
       const recentActivity = [] as any[];
       
       if (sheetsData?.totalJobs > 0) {
