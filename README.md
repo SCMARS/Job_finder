@@ -1,240 +1,199 @@
-# Job Automation System
+# Job Finder - Автоматизована система пошуку роботи
 
-Intelligent German Job Search & Contact Extraction Platform
+## 🚀 Швидкий запуск
 
-Automated job discovery from Bundesagentur für Arbeit with robust CAPTCHA handling, cookie consent strategies, contact extraction, and Google Sheets integration.
-
-## Features
-
-- Bundesagentur für Arbeit job search with filtering (keywords, location, radius, time period, employment type)
-- Robust cookie consent strategies with multiple fallback methods
-- CAPTCHA solving via 2Captcha API
-- Contact extraction priority: real email/phone first, external link as fallback
-- Google Sheets integration for data storage
-- Frontend dashboard with Job Search, Automation, and Statistics
-- Web scraping with Puppeteer for advanced contact extraction
-
-## Prerequisites
-
-- Node.js 18+ 
-- npm or yarn
-- Google Cloud Platform account (for Google Sheets integration)
-- 2Captcha API key
-
-## Installation
-
-### 1. Clone the repository
+### 1. Клонування проекту
 ```bash
 git clone https://github.com/SCMARS/Job_finder.git
 cd Job_finder
 ```
 
-### 2. Install dependencies
+### 2. Встановлення залежностей
 ```bash
-# Install root dependencies
+# Встановлення залежностей для бекенду
 npm install
 
-# Install client dependencies
+# Встановлення залежностей для фронтенду
 cd client
 npm install
 cd ..
 ```
 
-### 3. Environment configuration
+### 3. Налаштування середовища
 ```bash
-# Copy environment template
+# Копіювання файлу змінних середовища
 cp env.example .env
 
-# Edit .env file with your configuration
+# Редагування .env файлу
 nano .env
 ```
 
-**Required environment variables:**
+**Обов'язкові змінні в .env:**
 ```env
+# API ключі
+CAPTCHA_API_KEY=your_2captcha_api_key
+GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/service-account.json
+GOOGLE_SHEETS_SPREADSHEET_ID=your_spreadsheet_id
+
+# Налаштування серверу
 PORT=3002
-TWOCAPTCHA_API_KEY=your_2captcha_api_key
-
-# Optional but recommended for full functionality:
-GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/google-sheets-credentials.json
-GOOGLE_SHEETS_SPREADSHET_ID=your_spreadsheet_id
-GOOGLE_SHEETS_SHEET_TITLE=Sheet1
+NODE_ENV=development
 ```
 
-### 4. Google Sheets Setup (Optional)
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project or select existing
-3. Enable Google Sheets API and Google Drive API
-4. Create a Service Account
-5. Download the JSON credentials file
-6. Save it to `credentials/google-sheets-credentials.json`
-7. Share your Google Spreadsheet with the service account email (Editor access)
+### 4. Налаштування Google Sheets
+1. Створіть Google Cloud проект
+2. Увімкніть Google Sheets API
+3. Створіть Service Account
+4. Завантажте JSON ключ в папку `credentials/`
+5. Поділіться таблицею з email з Service Account
 
-## Running the Project
-
-### Development Mode (Recommended)
+### 5. Запуск проекту
 ```bash
-# Start both backend and frontend simultaneously
+# Запуск бекенду та фронтенду одночасно
 npm run dev
+
+# Або окремо:
+npm run server    # Бекенд на порту 3002
+npm run client    # Фронтенд на порту 3000
 ```
 
-This will start:
-- Backend server on port 3002
-- Frontend React app on port 3000
-
-### Manual Start
-```bash
-# Terminal 1 - Start backend
-npm run server
-
-# Terminal 2 - Start frontend
-npm run client
-```
-
-### Production Build
-```bash
-# Build frontend
-cd client
-npm run build
-cd ..
-
-# Start production server
-npm start
-```
-
-## Access Points
-
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:3002/api
-- **Health Check**: http://localhost:3002/api/health
-
-## Project Structure
+## 📁 Структура проекту
 
 ```
 Job_finder/
-├── server/                 # Backend Node.js/Express
-│   ├── index.js           # Main server entry point
-│   ├── routes/            # API endpoints
-│   ├── services/          # Business logic
-│   └── utils/             # Utilities and logging
-├── client/                # Frontend React app
-│   ├── src/               # Source code
-│   ├── public/            # Static files
-│   └── package.json       # Frontend dependencies
-├── credentials/            # API credentials (create this folder)
-├── logs/                  # Application logs
-└── package.json           # Root dependencies
+├── server/                 # Бекенд (Node.js + Express)
+│   ├── config/            # Конфігурація
+│   ├── routes/            # API маршрути
+│   ├── services/          # Бізнес-логіка
+│   └── utils/             # Утиліти
+├── client/                 # Фронтенд (React + TypeScript)
+│   ├── public/            # Статичні файли
+│   ├── src/               # React компоненти
+│   └── package.json       # Залежності фронтенду
+├── credentials/            # API ключі та сертифікати
+├── logs/                  # Логи системи
+└── package.json           # Залежності бекенду
 ```
 
-## Usage
+## 🔧 API Endpoints
 
-### 1. Job Search
-- Open http://localhost:3000
-- Use the Job Search tab
-- Enter keywords (use German terms for better results)
-- Set location and search radius
-- Click "Search Jobs"
+### Пошук роботи
+```http
+GET /api/jobs/search
+Query params:
+- keywords: пошукові слова
+- location: місце пошуку
+- radius: радіус пошуку (км)
+- size: кількість результатів
+- since: дата початку пошуку
+```
 
-### 2. Automation
-- Use the Automation tab to schedule automated job searches
-- Set up recurring searches with custom parameters
-- Monitor automation status and results
+### Збереження в Google Sheets
+```http
+POST /api/sheets/save
+Body: масив робочих місць
+```
 
-### 3. Statistics
-- View job pipeline statistics
-- Monitor enrichment success rates
-- Track automation performance
+### Статистика
+```http
+GET /api/statistics
+```
 
-## Troubleshooting
+## 🚨 Рішення проблем
 
-### Port Already in Use
+### Порт вже використовується
 ```bash
-# Kill process using port 3002
-lsof -ti:3002 | xargs kill -9
+# Знайти процес на порту 3002
+lsof -ti:3002
 
-# Or use a different port in .env
+# Зупинити процес
+kill -9 <PID>
+
+# Або змінити порт в .env
 PORT=3003
 ```
 
-### Frontend Build Issues
+### react-scripts не знайдено
 ```bash
-# Clear node_modules and reinstall
 cd client
+npm install
+npm start
+```
+
+### Модуль не знайдено
+```bash
+# Перевірити наявність файлів
+ls -la client/src/
+ls -la client/public/
+
+# Перевстановити залежності
 rm -rf node_modules package-lock.json
 npm install
 ```
 
-### Missing Files Error
-If you get "Could not find a required file: index.html":
+### Проблеми з Google Sheets
+1. Перевірте правильність `GOOGLE_SHEETS_CREDENTIALS_PATH`
+2. Переконайтеся, що таблиця доступна для Service Account
+3. Перевірте права доступу до Google Cloud проекту
+
+## 📊 Функціональність
+
+- 🔍 Пошук роботи на Bundesagentur für Arbeit
+- 🤖 Автоматичне рішення CAPTCHA
+- 📧 Обогащення контактної інформації
+- 📊 Збереження результатів в Google Sheets
+- 🚫 Фільтрація по чорному списку компаній
+- ⚡ Багатопотоковий пошук
+- 📱 Адаптивний React інтерфейс
+
+## 🛠 Технології
+
+**Бекенд:**
+- Node.js 18+
+- Express.js
+- Puppeteer (веб-скрапінг)
+- Google Sheets API
+- 2Captcha API
+
+**Фронтенд:**
+- React 18
+- TypeScript
+- CSS3
+
+## 📝 Логування
+
+Логи зберігаються в папці `logs/`:
+- `app.log` - загальні логи
+- `error.log` - помилки
+- `access.log` - HTTP запити
+
+## 🔒 Безпека
+
+- API ключі зберігаються в `.env` файлі
+- Credentials в окремій папці
+- `.gitignore` налаштований правильно
+- HTTPS для production
+
+## 🚀 Production
+
 ```bash
-# Ensure you're in the correct directory
-pwd
-# Should show: /path/to/Job_finder
-
-# Check if public folder exists
-ls -la client/public/
-# Should contain: index.html, manifest.json, favicon.ico
-```
-
-### Google Sheets Issues
-- Verify credentials file path in .env
-- Check if spreadsheet is shared with service account
-- Ensure Google Sheets API is enabled
-
-## API Examples
-
-### Search Jobs
-```bash
-curl -X POST http://localhost:3002/api/jobs/search \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "keywords": "software",
-    "location": "Berlin",
-    "radius": 50,
-    "size": 10,
-    "publishedSince": "30"
-  }'
-```
-
-### Check Automation Status
-```bash
-curl http://localhost:3002/api/automation/status
-```
-
-### Health Check
-```bash
-curl http://localhost:3002/api/health
-```
-
-## Development
-
-### Adding New Features
-1. Backend: Add routes in `server/routes/`
-2. Frontend: Add components in `client/src/components/`
-3. Services: Add business logic in `server/services/`
-
-### Logging
-- Backend logs: Check console output or `logs/` directory
-- Frontend logs: Check browser console
-
-### Testing
-```bash
-# Backend tests
-npm test
-
-# Frontend tests
+# Білд фронтенду
 cd client
-npm test
+npm run build
+
+# Запуск production серверу
+NODE_ENV=production npm start
 ```
 
-## Support
+## 📞 Підтримка
 
-For issues and questions:
-1. Check the troubleshooting section above
-2. Review server logs for error details
-3. Verify environment configuration
-4. Check if all required services are running
+При проблемах:
+1. Перевірте логи в `logs/`
+2. Переконайтеся, що всі залежності встановлені
+3. Перевірте налаштування в `.env`
+4. Створіть issue на GitHub
 
-## License
+## 📄 Ліцензія
 
-This project is proprietary software. All rights reserved.
+MIT License
 
