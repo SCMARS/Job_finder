@@ -1,156 +1,240 @@
-# 🚀 Job Automation System
+# Job Automation System
 
-**Intelligent German Job Search & Contact Extraction Platform**
+Intelligent German Job Search & Contact Extraction Platform
 
-> Automated job discovery from Bundesagentur für Arbeit with robust CAPTCHA handling, cookie consent strategies, contact extraction, and Google Sheets integration.
+Automated job discovery from Bundesagentur für Arbeit with robust CAPTCHA handling, cookie consent strategies, contact extraction, and Google Sheets integration.
 
-[![Node.js](https://img.shields.io/badge/Node.js-18+-green.svg)](https://nodejs.org/) [![React](https://img.shields.io/badge/React-19-blue.svg)](https://reactjs.org/)
+## Features
 
-## 📋 Contents
-- Features
-- Quick Start
-- Environment Variables
-- Google Sheets Setup
-- Run & Verify (End-to-End)
-- API Reference (curl examples)
-- Troubleshooting (CAPTCHA, Cookies, Sheets)
+- Bundesagentur für Arbeit job search with filtering (keywords, location, radius, time period, employment type)
+- Robust cookie consent strategies with multiple fallback methods
+- CAPTCHA solving via 2Captcha API
+- Contact extraction priority: real email/phone first, external link as fallback
+- Google Sheets integration for data storage
+- Frontend dashboard with Job Search, Automation, and Statistics
+- Web scraping with Puppeteer for advanced contact extraction
 
-## 🎯 Features
-- Bundesagentur für Arbeit job search with filtering (keywords, Ort, Radius, Zeitraum, Beschäftigungsart)
-- Robust cookie consent strategies (multi-selector click, double-click, storage flags, forced hide)
-- CAPTCHA solving via 2Captcha with retries, reloads, and case-sensitive handling
-- Contact extraction priority: email/phone first; fallback to external link only if none found
-- Shadow DOM traversal and unicode-aware regex for emails/phones
-- Google Sheets integration with graceful disable if misconfigured
-- Frontend dashboard with Job Search, Automation, Statistics
+## Prerequisites
 
-## 🚀 Quick Start
+- Node.js 18+ 
+- npm or yarn
+- Google Cloud Platform account (for Google Sheets integration)
+- 2Captcha API key
 
-### 1) Install
+## Installation
+
+### 1. Clone the repository
 ```bash
-cd "product pro"
-npm run install-all
+git clone https://github.com/SCMARS/Job_finder.git
+cd Job_finder
 ```
 
-### 2) Configure env
+### 2. Install dependencies
 ```bash
+# Install root dependencies
+npm install
+
+# Install client dependencies
+cd client
+npm install
+cd ..
+```
+
+### 3. Environment configuration
+```bash
+# Copy environment template
 cp env.example .env
-# Edit .env values (see below)
+
+# Edit .env file with your configuration
+nano .env
 ```
 
-Minimal required to run search + enrichment:
-- `PORT=3002`
-- `TWOCAPTCHA_API_KEY=...`
-- For Google Sheets (optional but recommended):
-  - `GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/google-sheets-credentials.json`
-  - `GOOGLE_SHEETS_SPREADSHEET_ID=...`
-  - `GOOGLE_SHEETS_SHEET_TITLE=Лист1` (or your sheet name)
-
-### 3) Start
-```bash
-npm run dev
-```
-- Frontend: http://localhost:3000
-- Backend:  http://localhost:3002
-
-## ⚙️ Environment Variables
-See `env.example` for a full list. Important ones:
+**Required environment variables:**
 ```env
 PORT=3002
-NODE_ENV=development
-
-# Bundesagentur
-BUNDESAGENTUR_API_URL=https://rest.arbeitsagentur.de/jobboerse/jobsuche-service
-BUNDESAGENTUR_CLIENT_ID=jobboerse-jobsuche
-
-# 2Captcha
 TWOCAPTCHA_API_KEY=your_2captcha_api_key
 
-# Google Sheets
+# Optional but recommended for full functionality:
 GOOGLE_SHEETS_CREDENTIALS_PATH=./credentials/google-sheets-credentials.json
-GOOGLE_SHEETS_SPREADSHEET_ID=your_google_sheets_id
-GOOGLE_SHEETS_SHEET_TITLE=Лист1
-
-# Puppeteer
-PUPPETEER_CLOSE_TABS=false
+GOOGLE_SHEETS_SPREADSHET_ID=your_spreadsheet_id
+GOOGLE_SHEETS_SHEET_TITLE=Sheet1
 ```
 
-## 📑 Google Sheets Setup
-1. Create a Service Account (GCP) and enable APIs:
-   - Google Sheets API
-   - (Added scope) Drive API
-2. Download credentials JSON → save to `credentials/google-sheets-credentials.json`
-3. Share your spreadsheet with the service account (Editor)
-4. Set `GOOGLE_SHEETS_SPREADSHEET_ID` and optional `GOOGLE_SHEETS_SHEET_TITLE`
+### 4. Google Sheets Setup (Optional)
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing
+3. Enable Google Sheets API and Google Drive API
+4. Create a Service Account
+5. Download the JSON credentials file
+6. Save it to `credentials/google-sheets-credentials.json`
+7. Share your Google Spreadsheet with the service account email (Editor access)
 
-Backend will auto-resolve first sheet title if not provided and will gracefully disable Sheets if config is missing.
+## Running the Project
 
-## ✅ Run & Verify (End-to-End)
-1) Health check
+### Development Mode (Recommended)
 ```bash
-curl -s http://localhost:3002/api/health | jq
+# Start both backend and frontend simultaneously
+npm run dev
 ```
 
-2) Search 1–5 jobs (Berlin, last 30 days) with enrichment
+This will start:
+- Backend server on port 3002
+- Frontend React app on port 3000
+
+### Manual Start
 ```bash
-curl -s -X POST http://localhost:3002/api/jobs/search \
+# Terminal 1 - Start backend
+npm run server
+
+# Terminal 2 - Start frontend
+npm run client
+```
+
+### Production Build
+```bash
+# Build frontend
+cd client
+npm run build
+cd ..
+
+# Start production server
+npm start
+```
+
+## Access Points
+
+- **Frontend**: http://localhost:3000
+- **Backend API**: http://localhost:3002/api
+- **Health Check**: http://localhost:3002/api/health
+
+## Project Structure
+
+```
+Job_finder/
+├── server/                 # Backend Node.js/Express
+│   ├── index.js           # Main server entry point
+│   ├── routes/            # API endpoints
+│   ├── services/          # Business logic
+│   └── utils/             # Utilities and logging
+├── client/                # Frontend React app
+│   ├── src/               # Source code
+│   ├── public/            # Static files
+│   └── package.json       # Frontend dependencies
+├── credentials/            # API credentials (create this folder)
+├── logs/                  # Application logs
+└── package.json           # Root dependencies
+```
+
+## Usage
+
+### 1. Job Search
+- Open http://localhost:3000
+- Use the Job Search tab
+- Enter keywords (use German terms for better results)
+- Set location and search radius
+- Click "Search Jobs"
+
+### 2. Automation
+- Use the Automation tab to schedule automated job searches
+- Set up recurring searches with custom parameters
+- Monitor automation status and results
+
+### 3. Statistics
+- View job pipeline statistics
+- Monitor enrichment success rates
+- Track automation performance
+
+## Troubleshooting
+
+### Port Already in Use
+```bash
+# Kill process using port 3002
+lsof -ti:3002 | xargs kill -9
+
+# Or use a different port in .env
+PORT=3003
+```
+
+### Frontend Build Issues
+```bash
+# Clear node_modules and reinstall
+cd client
+rm -rf node_modules package-lock.json
+npm install
+```
+
+### Missing Files Error
+If you get "Could not find a required file: index.html":
+```bash
+# Ensure you're in the correct directory
+pwd
+# Should show: /path/to/Job_finder
+
+# Check if public folder exists
+ls -la client/public/
+# Should contain: index.html, manifest.json, favicon.ico
+```
+
+### Google Sheets Issues
+- Verify credentials file path in .env
+- Check if spreadsheet is shared with service account
+- Ensure Google Sheets API is enabled
+
+## API Examples
+
+### Search Jobs
+```bash
+curl -X POST http://localhost:3002/api/jobs/search \
   -H 'Content-Type: application/json' \
   -d '{
     "keywords": "software",
     "location": "Berlin",
     "radius": 50,
-    "size": 5,
+    "size": 10,
     "publishedSince": "30"
-  }' | jq '.data.jobs | map({title, company, contactEmail, contactPhone, externalUrl})'
+  }'
 ```
-- Expected: real `contactEmail`/`contactPhone` when possible; else `externalUrl`.
 
-3) Save jobs to Google Sheets (optional)
+### Check Automation Status
 ```bash
-curl -s -X POST http://localhost:3002/api/sheets/save-jobs \
-  -H 'Content-Type: application/json' \
-  -d '{"jobs": [{"id":"test","title":"Test","company":"Test GmbH","location":"Berlin","publishedDate":"2025-08-18"}]}' | jq
+curl http://localhost:3002/api/automation/status
 ```
 
-4) Stats (Sheets)
+### Health Check
 ```bash
-curl -s http://localhost:3002/api/sheets/stats | jq
+curl http://localhost:3002/api/health
 ```
 
-## 📡 API Reference (curl)
-- Search: `POST /api/jobs/search` (see above)
-- Job details: `GET /api/jobs/:id`
-- Sheets save: `POST /api/sheets/save-jobs`
-- Sheets stats: `GET /api/sheets/stats`
-- Automation:
+## Development
+
+### Adding New Features
+1. Backend: Add routes in `server/routes/`
+2. Frontend: Add components in `client/src/components/`
+3. Services: Add business logic in `server/services/`
+
+### Logging
+- Backend logs: Check console output or `logs/` directory
+- Frontend logs: Check browser console
+
+### Testing
 ```bash
-curl -s -X POST http://localhost:3002/api/automation/run -H 'Content-Type: application/json' -d '{"searchParams":{"keywords":"software","location":"Deutschland"}}' | jq
-curl -s http://localhost:3002/api/automation/status | jq
+# Backend tests
+npm test
+
+# Frontend tests
+cd client
+npm test
 ```
 
-## 🧠 CAPTCHA & Cookies: What to expect
-- Cookies: multiple strategies including selector variants and double-click; if not visible, scraper proceeds with JS storage flags and forced banner hide.
-- CAPTCHA: image-only capture to 2Captcha; case-sensitive; retries up to several cycles; reloads image when umlauts/ß or empty answer; robust submit; waits for contact section to reveal; immediate DOM extraction with Shadow DOM traversal; strict German phone filtering; unicode whitespace normalization.
+## Support
 
-If email/phone still not found, the system returns `externalUrl` instead (no fake data).
+For issues and questions:
+1. Check the troubleshooting section above
+2. Review server logs for error details
+3. Verify environment configuration
+4. Check if all required services are running
 
-## 🛠️ Troubleshooting
-- Sheets “Requested entity was not found”:
-  - Check `GOOGLE_SHEETS_SPREADSHEET_ID`, share with service account, correct `GOOGLE_SHEETS_SHEET_TITLE`.
-  - Backend logs will say “Google Sheets disabled” if config missing; that’s OK (frontend will still work).
+## License
 
-- CAPTCHA not solving:
-  - Verify `TWOCAPTCHA_API_KEY` balance.
-  - Reduce concurrency (already set to batchSize=1 by default during enrichment in the API route).
-
-- Cookie banner blocks:
-  - The scraper attempts multiple selectors and storage flags; try running again or different job if site A/B varies.
-
-- Frontend timeouts/crashes:
-  - Long timeout is configured (20 minutes). UI is wrapped in ErrorBoundary to avoid full crash.
-
-## 🧪 Local Dev Tips
-- Logs: see `logs/` or console output.
-- Update client API base: `client/env.local` → `REACT_APP_API_URL=http://localhost:3002/api`.
-- Kill stuck server: `kill -9 $(lsof -ti :3002)`.
+This project is proprietary software. All rights reserved.
 
