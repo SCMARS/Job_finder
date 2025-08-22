@@ -1,7 +1,7 @@
 {
   "name": "job-automation-system",
   "version": "1.0.0",
-  "description": "Automated job search system with Bundesagentur integration",
+  "description": "Automated job search system with Bundesagentur integration, CAPTCHA solving, and contact enrichment",
   "main": "server/index.js",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
@@ -9,7 +9,10 @@
     "client": "cd client && npm start",
     "build": "cd client && npm run build",
     "start": "node server/index.js",
-    "install-all": "npm install && cd client && npm install"
+    "install-all": "npm install && cd client && npm install",
+    "setup": "./install.sh",
+    "test": "echo \"No tests specified\" && exit 0",
+    "lint": "echo \"No linting configured\" && exit 0"
   },
   "dependencies": {
     "2captcha": "^3.0.5-2",
@@ -38,8 +41,23 @@
     "google-sheets",
     "apollo",
     "instantly",
-    "pipedrive"
+    "pipedrive",
+    "captcha-solving",
+    "web-scraping",
+    "contact-enrichment"
   ],
-  "author": "",
-  "license": "MIT"
+  "author": "Job Automation Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/job-automation-system.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/job-automation-system/issues"
+  },
+  "homepage": "https://github.com/your-username/job-automation-system#readme",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  }
 }
