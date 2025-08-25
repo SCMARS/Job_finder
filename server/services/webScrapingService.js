@@ -347,6 +347,107 @@ class WebScrapingService {
       const extractedContacts = this.extractContactsFromHTML(content, url);
       contacts.push(...extractedContacts);
       
+      // ДОПОЛНИТЕЛЬНО: извлекаем информацию о компании
+      try {
+        const companyInfo = await page.evaluate(() => {
+          const result = {
+            companyName: null,
+            companyAddress: null,
+            contactPerson: null,
+            website: null
+          };
+          
+          const root = document.querySelector('#jobdetails-kontaktdaten-block') || document.body;
+          const fullText = (document.body.innerText || '').replace(/[\u00A0\u202F\u2007]/g, ' ').replace(/[\u200B\u200C\u200D]/g, '');
+          const contactText = (root.innerText || '').replace(/[\u00A0\u202F\u2007]/g, ' ').replace(/[\u200B\u200C\u200D]/g, '');
+          
+          // Ищем название компании (обычно в заголовке или в начале описания)
+          const companyNameMatch = fullText.match(/(?:Firma|Unternehmen|Arbeitgeber|Company):\s*([^\n\r]+)/i) ||
+                                  fullText.match(/([A-ZÄÖÜ][a-zäöüß\s&\.]+(?:GmbH|AG|KG|e\.V\.|UG|OHG))/) ||
+                                  fullText.match(/([A-ZÄÖÜ][a-zäöüß\s&\.]+(?:Personalmanagement|Management|Consulting|Services|Solutions|Technologies|Systems|Software|IT|Engineering|Development|Design|Marketing|Sales|Recruitment|HR|Human\s+Resources))/i);
+          if (companyNameMatch) {
+            result.companyName = companyNameMatch[1].trim();
+          }
+          
+          // Ищем адрес компании (только в блоке контактов)
+          const addressMatch = contactText.match(/(?:Adresse|Anschrift|Address):\s*([^\n\r]+(?:\n[^\n\r]+)*)/i) ||
+                              contactText.match(/([A-ZÄÖÜ][a-zäöüß\s]+(?:Straße|Str\.|Weg|Platz|Allee)\s+\d+[a-z]?[,\s]+[\d]{5}\s+[A-ZÄÖÜ][a-zäöüß\s]+)/i);
+          if (addressMatch) {
+            result.companyAddress = addressMatch[1].trim();
+          }
+          
+          // Ищем контактное лицо (только в блоке контактов)
+          const contactPersonMatch = contactText.match(/(?:Ansprechpartner|Kontakt|Contact|Herr|Frau)\s+([A-ZÄÖÜ][a-zäöüß\s]+)/i) ||
+                                    contactText.match(/(Herr|Frau)\s+([A-ZÄÖÜ][a-zäöüß\s]+)/) ||
+                                    contactText.match(/(?:Herr|Frau)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)*)/) ||
+                                    contactText.match(/([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)*)\s+(?:Telefon|Tel|E-Mail|Email)/);
+          if (contactPersonMatch) {
+            result.contactPerson = contactPersonMatch[0].trim();
+          }
+          
+          // Ищем веб-сайт (по всей странице)
+          const websiteMatch = fullText.match(/(?:Homepage|Website|Internet):\s*([^\s\n\r]+)/i) ||
+                              fullText.match(/(https?:\/\/[^\s\n\r]+)/);
+          if (websiteMatch) {
+            result.website = websiteMatch[1].trim();
+          }
+          
+          return result;
+        });
+        
+        // Добавляем найденную информацию о компании как контакты
+        if (companyInfo.companyName) {
+          contacts.push({
+            type: 'company_name',
+            value: companyInfo.companyName,
+            source: url,
+            confidence: 'high'
+          });
+        }
+        
+        if (companyInfo.companyAddress) {
+          contacts.push({
+            type: 'company_address',
+            value: companyInfo.companyAddress,
+            source: url,
+            confidence: 'high'
+          });
+        }
+        
+        if (companyInfo.contactPerson) {
+          contacts.push({
+            type: 'contact_person',
+            value: companyInfo.contactPerson,
+            source: url,
+            confidence: 'high'
+          });
+        }
+        
+        if (companyInfo.website) {
+          contacts.push({
+            type: 'website',
+            value: companyInfo.website,
+            source: url,
+            confidence: 'high'
+          });
+        }
+        
+        if (companyInfo.companyName || companyInfo.companyAddress || companyInfo.contactPerson || companyInfo.website) {
+          logger.info('Company information extracted', {
+            jobId,
+            companyName: companyInfo.companyName,
+            companyAddress: companyInfo.companyAddress ? companyInfo.companyAddress.substring(0, 50) + '...' : null,
+            contactPerson: companyInfo.contactPerson,
+            website: companyInfo.website
+          });
+        }
+      } catch (companyError) {
+        logger.warn('Company information extraction failed', {
+          jobId,
+          error: (companyError && companyError.message) ? companyError.message : String(companyError)
+        });
+      }
+      
       // Debug info после извлечения
       logger.info('Email search debug', {
         jobId,
@@ -1024,13 +1125,33 @@ class WebScrapingService {
               const t = (root?.innerText || '').toLowerCase();
               return t.includes('telefon') || t.includes('e-mail') || t.includes('e‑mail') || document.querySelector('a[href^="mailto:"]') || document.querySelector('a[href^="tel:"]');
             }, { timeout: 8000 });
-            // Immediate labeled extraction after CAPTCHA success
+            // Enhanced extraction after CAPTCHA success - get full company info
             const labeled = await page.evaluate(() => {
-              const out = { emails: [], phones: [] };
+              const out = { 
+                emails: [], 
+                phones: [], 
+                contactPerson: null,
+                companyAddress: null,
+                companyName: null,
+                website: null,
+                rawContactData: null
+              };
               const root = document.querySelector('#jobdetails-kontaktdaten-block') || document.body;
               if (!root) return out;
-    const seen = new Set();
-              const pushUnique = (arr, val) => { const v = String(val || '').trim(); if (v && !seen.has(v)) { seen.add(v); arr.push(v); } };
+              
+              const seen = new Set();
+              const pushUnique = (arr, val) => { 
+                const v = String(val || '').trim(); 
+                if (v && !seen.has(v)) { 
+                  seen.add(v); 
+                  arr.push(v); 
+                } 
+              };
+              
+              // Get raw text content for address extraction
+              const fullText = (root.innerText || '').replace(/[\u00A0\u202F\u2007]/g,' ').replace(/[\u200B\u200C\u200D]/g,'');
+              out.rawContactData = fullText;
+              
               const walk = (node) => {
                 const anchors = node.querySelectorAll ? node.querySelectorAll('a[href^="mailto:"], a[href^="tel:"]') : [];
                 anchors.forEach(a => {
@@ -1038,24 +1159,132 @@ class WebScrapingService {
                   if (/^mailto:/i.test(href)) pushUnique(out.emails, href.replace(/^mailto:/i, ''));
                   if (/^tel:/i.test(href)) pushUnique(out.phones, href.replace(/^tel:/i, ''));
                 });
+                
                 const txt = (node.innerText || '').replace(/[\u00A0\u202F\u2007]/g,' ').replace(/[\u200B\u200C\u200D]/g,'');
-                const pm = txt.match(/Telefon\s*:\s*([+0-9\s()\-]{8,})/i); if (pm) pushUnique(out.phones, pm[1]);
-                const em = txt.match(/E-?Mail\s*:\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i); if (em) pushUnique(out.emails, em[1]);
+                
+                // Extract phone numbers
+                const pm = txt.match(/Telefon\s*:\s*([+0-9\s()\-]{8,})/i); 
+                if (pm) pushUnique(out.phones, pm[1]);
+                
+                // Extract emails
+                const em = txt.match(/E-?Mail\s*:\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i); 
+                if (em) pushUnique(out.emails, em[1]);
+                
+                // Extract contact person (Herr/Frau + Name)
+                if (!out.contactPerson) {
+                  const personMatch = txt.match(/(Herr|Frau)\s+([A-ZÄÖÜ][a-zäöüß]+(?:\s+[A-ZÄÖÜ][a-zäöüß]+)*)/i);
+                  if (personMatch) {
+                    out.contactPerson = personMatch[0];
+                  }
+                }
+                
+                // Extract company website
+                if (!out.website) {
+                  const websiteMatch = txt.match(/(https?:\/\/[^\s]+)/i) || 
+                                     txt.match(/www\.[^\s]+\.[a-z]{2,}/i);
+                  if (websiteMatch) {
+                    out.website = websiteMatch[0].replace(/[,.\s]*$/, '');
+                  }
+                }
+                
                 if (node.shadowRoot) walk(node.shadowRoot);
                 const children = node.children ? Array.from(node.children) : [];
                 children.forEach(walk);
               };
+              
               walk(root);
+              
+              // Extract company address from full text
+              const addressRegex = /([A-ZÄÖÜ][a-zäöüß\s]+(?:straße|str\.|platz|weg|gasse|allee|ring)\s+\d+[a-z]?)\s+(\d{5})\s+([A-ZÄÖÜ][a-zäöüß\s]+)/i;
+              const addressMatch = fullText.match(addressRegex);
+              if (addressMatch) {
+                out.companyAddress = {
+                  street: addressMatch[1].trim(),
+                  zipCode: addressMatch[2],
+                  city: addressMatch[3].trim(),
+                  fullAddress: `${addressMatch[1].trim()}, ${addressMatch[2]} ${addressMatch[3].trim()}`
+                };
+              }
+              
+              // Extract company name (usually at the beginning of contact block)
+              const companyNameMatch = fullText.match(/^([A-ZÄÖÜ][^0-9\n]+(?:GmbH|AG|SE|KG|e\.V\.|mbH|Ltd|Inc|Corp))/);
+              if (companyNameMatch) {
+                out.companyName = companyNameMatch[1].trim();
+              }
+              
               return out;
             });
             const pageUrl = await page.url();
-            (labeled.emails||[]).forEach(e => contacts.push({ type:'email', value:String(e).trim(), source:pageUrl, confidence:'high' }));
+            
+            // Process emails
+            (labeled.emails||[]).forEach(e => contacts.push({ 
+              type:'email', 
+              value:String(e).trim(), 
+              source:pageUrl, 
+              confidence:'high' 
+            }));
+            
+            // Process phones
             (labeled.phones||[]).forEach(p => {
               const norm = String(p).replace(/[^\d+]/g,'');
               const garbage = /^([0-9]{1,3}\s+){2,}[0-9]{1,3}$/.test(String(p).trim());
               if (!garbage && /^\+49\d{7,15}$/.test(norm)) {
-                contacts.push({ type:'phone', value:String(p).trim(), source:pageUrl, confidence:'high' });
+                contacts.push({ 
+                  type:'phone', 
+                  value:String(p).trim(), 
+                  source:pageUrl, 
+                  confidence:'high' 
+                });
               }
+            });
+            
+            // Add company information as metadata
+            if (labeled.contactPerson) {
+              contacts.push({
+                type: 'contact_person',
+                value: labeled.contactPerson,
+                source: pageUrl,
+                confidence: 'high'
+              });
+            }
+            
+            if (labeled.companyAddress) {
+              contacts.push({
+                type: 'company_address',
+                value: labeled.companyAddress.fullAddress,
+                source: pageUrl,
+                confidence: 'high',
+                details: labeled.companyAddress
+              });
+            }
+            
+            if (labeled.companyName) {
+              contacts.push({
+                type: 'company_name',
+                value: labeled.companyName,
+                source: pageUrl,
+                confidence: 'high'
+              });
+            }
+            
+            if (labeled.website) {
+              contacts.push({
+                type: 'website',
+                value: labeled.website,
+                source: pageUrl,
+                confidence: 'medium'
+              });
+            }
+            
+            // Log enhanced extraction results
+            logger.info('📊 Enhanced contact extraction completed', {
+              jobId,
+              emails: labeled.emails?.length || 0,
+              phones: labeled.phones?.length || 0,
+              contactPerson: !!labeled.contactPerson,
+              companyAddress: !!labeled.companyAddress,
+              companyName: !!labeled.companyName,
+              website: !!labeled.website
             });
           } catch (e) { /* continue */ }
           return true;
