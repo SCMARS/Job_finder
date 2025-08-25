@@ -2,6 +2,7 @@ const { google } = require('googleapis');
 const fs = require('fs');
 const path = require('path');
 const logger = require('../utils/logger');
+const duplicateDetectionService = require('./duplicateDetectionService');
 
 class GoogleSheetsService {
   constructor() {
@@ -106,6 +107,10 @@ class GoogleSheetsService {
         'Job URL',
         'Contact Email', // Real extracted email
         'Contact Phone', // Real extracted phone
+        'Contact Person', // NEW: Herr/Frau Name
+        'Company Address', // NEW: Full company address
+        'Company Website', // NEW: Company website
+        'Extracted Company Name', // NEW: Company name from contact block
         'Salary',
         'Published Date',
         'Application Deadline',
@@ -115,23 +120,24 @@ class GoogleSheetsService {
         'Instantly Status',
         'Pipedrive Status',
         'Processing Status',
+        'Duplicate Status', // NEW: Duplicate detection status
         'Created At',
         'Updated At'
       ];
 
       const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
 
-      // Check if headers exist
+      // Check if headers exist (extended to Z for new columns)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: a1('A1:U1')
+        range: a1('A1:Z1')
       });
 
       if (!response.data.values || response.data.values.length === 0) {
         // Add headers if they don't exist
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
-          range: a1('A1:U1'),
+          range: a1('A1:Z1'),
           valueInputOption: 'RAW',
           resource: {
             values: [headers]
@@ -170,24 +176,70 @@ class GoogleSheetsService {
 
       logger.sheets.info('Saving jobs to Google Sheets', { count: jobs.length });
 
+      // Шаг 1: Получаем существующие вакансии для проверки дубликатов
+      const existingJobs = await this.getExistingJobs();
+      logger.sheets.info('Retrieved existing jobs for duplicate check', { 
+        existingCount: existingJobs.length 
+      });
+
+      // Шаг 2: Проверяем дубликаты
+      const duplicateCheckResult = duplicateDetectionService.filterDuplicates(jobs);
+      duplicateDetectionService.logDuplicateInfo(duplicateCheckResult);
+
+      // Шаг 3: Сохраняем только уникальные вакансии
+      const uniqueJobs = duplicateCheckResult.uniqueJobs;
+      const duplicates = duplicateCheckResult.duplicates;
+
+      if (duplicates.length > 0) {
+        logger.sheets.info('Duplicates filtered out', {
+          originalCount: jobs.length,
+          uniqueCount: uniqueJobs.length,
+          duplicateCount: duplicates.length,
+          examples: duplicates.slice(0, 3).map(d => ({
+            newJob: { id: d.newJob.id, title: d.newJob.title, company: d.newJob.company },
+            existingJob: { id: d.existingJob.id, title: d.existingJob.title, company: d.existingJob.company },
+            similarity: d.duplicateInfo.similarity,
+            reason: d.duplicateInfo.reason
+          }))
+        });
+
+        // Отмечаем существующие вакансии как дубликаты
+        try {
+          const markedCount = await this.markExistingJobsAsDuplicates(duplicates);
+          logger.sheets.info('Existing duplicates marked in spreadsheet', { markedCount });
+        } catch (markError) {
+          logger.sheets.warn('Failed to mark existing duplicates', { error: markError.message });
+        }
+      }
+
+      if (uniqueJobs.length === 0) {
+        logger.sheets.info('No unique jobs to save after duplicate filtering');
+        return { 
+          saved: 0, 
+          skipped: jobs.length, 
+          errors: 0,
+          duplicates: duplicates.length
+        };
+      }
+
       const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
 
       // For large datasets, process in batches to avoid API limits
       const BATCH_SIZE = 200;
       let totalSaved = 0;
 
-      if (jobs.length > BATCH_SIZE) {
+      if (uniqueJobs.length > BATCH_SIZE) {
         logger.sheets.info('Processing large dataset in batches', { 
-          totalJobs: jobs.length, 
+          totalJobs: uniqueJobs.length, 
           batchSize: BATCH_SIZE 
         });
 
-        for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
-          const batch = jobs.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < uniqueJobs.length; i += BATCH_SIZE) {
+          const batch = uniqueJobs.slice(i, i + BATCH_SIZE);
           const rows = batch.map(job => this.jobToRow(job));
           
           const nextRow = await this.getNextEmptyRow();
-          const range = a1(`A${nextRow}:U${nextRow + rows.length - 1}`);
+          const range = a1(`A${nextRow}:Z${nextRow + rows.length - 1}`);
 
           await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
@@ -206,16 +258,16 @@ class GoogleSheetsService {
           });
 
           // Small delay between batches to avoid rate limiting
-          if (i + BATCH_SIZE < jobs.length) {
+          if (i + BATCH_SIZE < uniqueJobs.length) {
             await new Promise(resolve => setTimeout(resolve, 100));
           }
         }
       } else {
         // Process normally for smaller datasets
-        const rows = jobs.map(job => this.jobToRow(job));
+        const rows = uniqueJobs.map(job => this.jobToRow(job));
         
         const nextRow = await this.getNextEmptyRow();
-        const range = a1(`A${nextRow}:U${nextRow + rows.length - 1}`);
+        const range = a1(`A${nextRow}:Z${nextRow + rows.length - 1}`);
 
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
@@ -226,14 +278,20 @@ class GoogleSheetsService {
           }
         });
 
-        totalSaved = jobs.length;
+        totalSaved = uniqueJobs.length;
       }
 
       logger.sheets.info('Jobs saved successfully', { 
-        count: totalSaved
+        count: totalSaved,
+        duplicatesFiltered: duplicates.length
       });
 
-      return { saved: totalSaved, skipped: 0, errors: 0 };
+      return { 
+        saved: totalSaved, 
+        skipped: duplicates.length, 
+        errors: 0,
+        duplicates: duplicates.length
+      };
     } catch (error) {
       logger.sheets.error('Failed to save jobs', { 
         error: error.message, 
@@ -346,15 +404,85 @@ class GoogleSheetsService {
         spreadsheetId: this.spreadsheetId,
         range: updateRange,
         valueInputOption: 'RAW',
-        resource: { values }
+        resource: {
+          values: values
+        }
       });
 
-      logger.info('Job enrichment status updated', { jobId, enrichmentData });
+      logger.sheets.info('Job enrichment status updated', { jobId });
     } catch (error) {
-      logger.error('Failed to update job enrichment status', { 
+      logger.sheets.error('Failed to update job enrichment status', { 
         jobId, 
         error: error.message 
       });
+    }
+  }
+
+  /**
+   * Mark existing jobs as duplicates based on duplicate detection results
+   * @param {Array} duplicates - Array of duplicate information
+   * @returns {Promise<number>} Number of jobs marked as duplicates
+   */
+  async markExistingJobsAsDuplicates(duplicates) {
+    try {
+      if (this.isDisabled || !duplicates || duplicates.length === 0) {
+        return 0;
+      }
+
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+      let markedCount = 0;
+
+      for (const duplicate of duplicates) {
+        try {
+          // Находим строку существующей вакансии
+          const existingJobRow = await this.findJobRow(duplicate.existingJob.id);
+          if (existingJobRow) {
+            // Обновляем статус дубликата
+            await this.sheets.spreadsheets.values.update({
+              spreadsheetId: this.spreadsheetId,
+              range: a1(`W${existingJobRow}`), // Колонка W = Duplicate Status
+              valueInputOption: 'RAW',
+              resource: {
+                values: [['Duplicate']]
+              }
+            });
+
+            // Также обновляем время обновления
+            await this.sheets.spreadsheets.values.update({
+              spreadsheetId: this.spreadsheetId,
+              range: a1(`Z${existingJobRow}`), // Колонка Z = Updated At
+              valueInputOption: 'RAW',
+              resource: {
+                values: [[new Date().toISOString()]]
+              }
+            });
+
+            markedCount++;
+            logger.sheets.info('Marked existing job as duplicate', {
+              jobId: duplicate.existingJob.id,
+              duplicateWith: duplicate.newJob.id,
+              similarity: duplicate.duplicateInfo.similarity
+            });
+          }
+        } catch (jobError) {
+          logger.sheets.warn('Failed to mark job as duplicate', {
+            jobId: duplicate.existingJob.id,
+            error: jobError.message
+          });
+        }
+      }
+
+      if (markedCount > 0) {
+        logger.sheets.info('Duplicate marking completed', { markedCount });
+      }
+
+      return markedCount;
+    } catch (error) {
+      logger.sheets.error('Failed to mark existing jobs as duplicates', { 
+        error: error.message,
+        duplicateCount: duplicates?.length 
+      });
+      return 0;
     }
   }
 
@@ -410,6 +538,10 @@ class GoogleSheetsService {
       job.externalUrl || '',
       job.contactEmail || '', // Real extracted email
       job.contactPhone || '', // Real extracted phone
+      job.contactPerson || '', // NEW: Contact person (Herr/Frau Name)
+      job.companyAddress || '', // NEW: Company address
+      job.companyWebsite || '', // NEW: Company website
+      job.extractedCompanyName || '', // NEW: Extracted company name
       job.salary || '',
       job.publishedDate || '',
       job.applicationDeadline || '',
@@ -419,6 +551,7 @@ class GoogleSheetsService {
       'Pending', // Instantly Status
       'Pending', // Pipedrive Status
       'New', // Processing Status
+      'New', // Duplicate Status - NEW
       new Date().toISOString(), // Created At
       new Date().toISOString()  // Updated At
     ];
@@ -441,17 +574,22 @@ class GoogleSheetsService {
       externalUrl: row[7] || '',
       contactEmail: row[8] || '',
       contactPhone: row[9] || '',
-      salary: row[10] || '',
-      publishedDate: row[11] || '',
-      applicationDeadline: row[12] || '',
-      enrichedEmail: row[13] || '',
-      enrichedPhone: row[14] || '',
-      apolloStatus: row[15] || '',
-      instantlyStatus: row[16] || '',
-      pipedriveStatus: row[17] || '',
-      processingStatus: row[18] || '',
-      createdAt: row[19] || '',
-      updatedAt: row[20] || ''
+      contactPerson: row[10] || '', // NEW
+      companyAddress: row[11] || '', // NEW
+      companyWebsite: row[12] || '', // NEW
+      extractedCompanyName: row[13] || '', // NEW
+      salary: row[14] || '',
+      publishedDate: row[15] || '',
+      applicationDeadline: row[16] || '',
+      enrichmentConfidence: row[17] || '',
+      hasRealEmail: row[18] || '',
+      enrichmentStatus: row[19] || '',
+      instantlyStatus: row[20] || '',
+      pipedriveStatus: row[21] || '',
+      processingStatus: row[22] || '',
+      duplicateStatus: row[23] || '', // NEW: Duplicate status
+      createdAt: row[24] || '',
+      updatedAt: row[25] || ''
     };
   }
 
@@ -502,6 +640,42 @@ class GoogleSheetsService {
     } catch (error) {
       logger.sheets.error('Failed to get next empty row', { error: error.message });
       return 2; // Default to row 2
+    }
+  }
+
+  /**
+   * Get all existing jobs from the spreadsheet for duplicate checking
+   * @returns {Promise<Array>} Array of existing job objects
+   */
+  async getExistingJobs() {
+    try {
+      if (this.isDisabled) return [];
+      
+      const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
+      
+      // Получаем все строки с данными (начиная со строки 2, пропуская заголовки)
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: a1('A2:Z') // Получаем все колонки для каждой вакансии
+      });
+
+      if (!response.data.values || response.data.values.length === 0) {
+        return [];
+      }
+
+      // Конвертируем строки в объекты вакансий
+      const existingJobs = response.data.values
+        .filter(row => row[0] && row[0].trim() !== '') // Фильтруем пустые строки
+        .map(row => this.rowToJob(row));
+
+      logger.sheets.info('Retrieved existing jobs for duplicate check', { 
+        count: existingJobs.length 
+      });
+
+      return existingJobs;
+    } catch (error) {
+      logger.sheets.error('Failed to get existing jobs', { error: error.message });
+      return [];
     }
   }
 

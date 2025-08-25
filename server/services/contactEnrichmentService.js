@@ -9,7 +9,7 @@ const webScrapingService = require('./webScrapingService'); // Added import for 
  */
 class ContactEnrichmentService {
   constructor() {
-    this.rateLimitDelay = 1000; // 1 second between requests
+    this.rateLimitDelay = 1000; 
     this.maxRetries = 3;
   }
 
@@ -111,10 +111,14 @@ class ContactEnrichmentService {
               contact2: arbeitsagenturContacts[2] ? {email: arbeitsagenturContacts[2].value, type: arbeitsagenturContacts[2].type, confidence: arbeitsagenturContacts[2].confidence} : null
             });
             
-            // Set email and phone from the contacts list
+            // Extract all types of contact information
             const emailContact = arbeitsagenturContacts.find(c => c.type === 'email');
             const phoneContact = arbeitsagenturContacts.find(c => c.type === 'phone');
             const externalLinkContact = arbeitsagenturContacts.find(c => c.type === 'external_link');
+            const contactPersonContact = arbeitsagenturContacts.find(c => c.type === 'contact_person');
+            const companyAddressContact = arbeitsagenturContacts.find(c => c.type === 'company_address');
+            const companyNameContact = arbeitsagenturContacts.find(c => c.type === 'company_name');
+            const websiteContact = arbeitsagenturContacts.find(c => c.type === 'website');
             
             if (emailContact) {
               enrichmentResult.contactEmail = emailContact.value;
@@ -131,13 +135,31 @@ class ContactEnrichmentService {
                 });
               }
             }
-            // НОВОЕ: обработка внешних ссылок
-            // Проверяем что НЕТ реальных контактов (email или нормального телефона)
+           
             const hasRealEmail = emailContact && emailContact.value && !emailContact.value.startsWith('http');
             const hasRealPhone = phoneContact && phoneContact.value && 
                                 !phoneContact.value.match(/^\d{10}-\d$/) && 
                                 !phoneContact.value.match(/^\d+\s\d+\s\d+/) && 
                                 phoneContact.value.length > 7;
+            
+            // Add enhanced company information
+            if (contactPersonContact) {
+              enrichmentResult.contactPerson = contactPersonContact.value;
+              enrichmentResult.contactName = contactPersonContact.value;
+            }
+            
+            if (companyAddressContact) {
+              enrichmentResult.companyAddress = companyAddressContact.value;
+              enrichmentResult.companyAddressDetails = companyAddressContact.details;
+            }
+            
+            if (companyNameContact) {
+              enrichmentResult.extractedCompanyName = companyNameContact.value;
+            }
+            
+            if (websiteContact) {
+              enrichmentResult.companyWebsite = websiteContact.value;
+            }
             
             // Приоритет: реальные контакты > внешние ссылки
             if (externalLinkContact && !hasRealEmail && !hasRealPhone) {
@@ -170,7 +192,7 @@ class ContactEnrichmentService {
               source: contact.source || 'arbeitsagentur'
             }));
             
-            logger.info('Real contacts found via Arbeitsagentur page scraping', {
+            logger.info('📋 Complete contact information extracted via Arbeitsagentur', {
               jobId: job.id,
               contactsFound: arbeitsagenturContacts.length,
               primaryEmail: arbeitsagenturContacts[0].value,
@@ -178,6 +200,10 @@ class ContactEnrichmentService {
               primaryConfidence: arbeitsagenturContacts[0].confidence,
               emailFound: !!emailContact,
               phoneFound: !!phoneContact,
+              contactPerson: !!contactPersonContact ? contactPersonContact.value : null,
+              companyAddress: !!companyAddressContact ? companyAddressContact.value : null,
+              companyName: !!companyNameContact ? companyNameContact.value : null,
+              website: !!websiteContact ? websiteContact.value : null,
               confidence: 'very_high',
               methods: ['arbeitsagentur_advanced_scraping']
             });
