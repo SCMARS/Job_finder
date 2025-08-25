@@ -253,14 +253,28 @@ router.post('/search', async (req, res) => {
     // Step 1: Get jobs from Bundesagentur
     const results = await bundesagenturService.searchJobs(searchParams);
     
-    // Step 2: Enrich with real contacts if enabled and we have jobs
+    // Step 2: Apply Zeitarbeit and blacklist filtering
     if (results.jobs && results.jobs.length > 0) {
-      // Apply blacklist filter first
       const before = results.jobs.length;
-      results.jobs = results.jobs.filter(j => !blacklistService.isBlockedCompany(j.company));
+      let zeitarbeitFiltered = 0;
+      
+      // Filter out Zeitarbeit companies and blacklisted companies
+      results.jobs = results.jobs.filter(job => {
+        const isBlocked = blacklistService.isBlockedCompany(job.company);
+        if (isBlocked && blacklistService.isZeitarbeit(job.company)) {
+          zeitarbeitFiltered++;
+        }
+        return !isBlocked;
+      });
+      
       const removed = before - results.jobs.length;
       if (removed > 0) {
-        logger.jobs.info('Filtered jobs by blacklist', { removed, remaining: results.jobs.length });
+        logger.jobs.info('🚫 Filtered jobs by blacklist', { 
+          removed, 
+          zeitarbeitAgencies: zeitarbeitFiltered,
+          remaining: results.jobs.length,
+          filteredPercent: Math.round((removed / before) * 100) + '%'
+        });
       }
     }
 

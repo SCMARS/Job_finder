@@ -98,6 +98,20 @@ router.post('/blacklist/remove', (req, res) => {
 });
 
 /**
+ * GET /api/config/blacklist/stats
+ * Get blacklist filtering statistics
+ */
+router.get('/blacklist/stats', (req, res) => {
+	try {
+		const stats = blacklistService.getStats();
+		res.json({ success: true, data: stats });
+	} catch (error) {
+		logger.error('Failed to get blacklist stats', { error: error.message });
+		res.status(500).json({ success: false, error: 'Failed to get blacklist stats', message: error.message });
+	}
+});
+
+/**
  * POST /api/config/validate
  * Validate configuration and API connections
  */
