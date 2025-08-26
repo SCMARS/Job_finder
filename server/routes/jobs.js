@@ -4,6 +4,7 @@ const bundesagenturService = require('../services/bundesagenturService');
 const contactEnrichmentService = require('../services/contactEnrichmentService'); // Add this
 const logger = require('../utils/logger');
 const blacklistService = require('../services/blacklistService');
+const workTypeFilterService = require('../services/workTypeFilterService');
 
 /**
  * GET & POST /api/jobs/search
@@ -61,6 +62,26 @@ const searchJobs = async (req, res) => {
         }
       }
 
+      // Apply work type filter (exclude Zeitarbeit, Minijob, etc.)
+      if (pageJobs.length > 0) {
+        const beforeWorkTypeFilter = pageJobs.length;
+        const workTypeFilterResult = workTypeFilterService.filterJobs(pageJobs);
+        pageJobs = workTypeFilterResult.filteredJobs;
+        const removedByWorkType = beforeWorkTypeFilter - pageJobs.length;
+        if (removedByWorkType > 0) {
+          logger.jobs.info('Filtered jobs by work type (page level)', { 
+            removed: removedByWorkType, 
+            remaining: pageJobs.length, 
+            page: currentPage,
+            excludedByWorkType: workTypeFilterResult.statistics.excludedByWorkType,
+            excludedByEmploymentType: workTypeFilterResult.statistics.excludedByEmploymentType,
+            excludedByDescription: workTypeFilterResult.statistics.excludedByDescription,
+            excludedByRequirements: workTypeFilterResult.statistics.excludedByRequirements,
+            excludedByTitle: workTypeFilterResult.statistics.excludedByTitle
+          });
+        }
+      }
+
       aggregatedJobs = aggregatedJobs.concat(pageJobs);
 
       // Stop if this page returned less than perPage (no more pages)
@@ -84,18 +105,28 @@ const searchJobs = async (req, res) => {
     // Enforce requested size cap after aggregation
     const cappedJobs = aggregatedJobs.slice(0, requestedSize);
 
+    // Apply final work type filter to aggregated results
+    const finalWorkTypeFilterResult = workTypeFilterService.filterJobs(cappedJobs);
+    const finalFilteredJobs = finalWorkTypeFilterResult.filteredJobs;
+
     // Prepare results object consistent with previous response shape
     const results = {
-      jobs: cappedJobs,
+      jobs: finalFilteredJobs,
       totalCount: totalCount,
       page: searchParams.page,
       searchParams: searchParams,
       timestamp: new Date().toISOString(),
       meta: {
         requestedSize,
-        returnedCount: cappedJobs.length,
+        returnedCount: finalFilteredJobs.length,
         pagesFetched,
-        durationMs: Date.now() - startTs
+        durationMs: Date.now() - startTs,
+        filtering: {
+          blacklistFiltered: totalCount - aggregatedJobs.length,
+          workTypeFiltered: finalWorkTypeFilterResult.excludedCount,
+          totalFiltered: (totalCount - aggregatedJobs.length) + finalWorkTypeFilterResult.excludedCount,
+          finalFilterPercent: Math.round(((totalCount - finalFilteredJobs.length) / totalCount) * 100) + '%'
+        }
       }
     };
 
@@ -154,6 +185,38 @@ const searchJobs = async (req, res) => {
 // Support both GET and POST for /search
 router.get('/search', searchJobs);
 router.post('/search', searchJobs);
+
+/**
+ * GET /api/jobs/filtering/stats
+ * Get filtering statistics for both blacklist and work type filters
+ */
+router.get('/filtering/stats', async (req, res) => {
+  try {
+    const blacklistStats = blacklistService.getStats();
+    const workTypeStats = workTypeFilterService.getStats();
+    
+    res.json({
+      success: true,
+      data: {
+        blacklist: blacklistStats,
+        workType: workTypeStats,
+        summary: {
+          totalExcludedTypes: blacklistStats.totalTerms + workTypeStats.totalExcludedTypes,
+          blacklistProtection: blacklistStats.zeitarbeitProtection,
+          workTypeProtection: true,
+          description: 'Comprehensive filtering system for Zeitarbeit companies and temporary work types'
+        }
+      }
+    });
+  } catch (error) {
+    logger.error('Failed to get filtering stats', { error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to get filtering stats',
+      message: error.message 
+    });
+  }
+});
 
 /**
  * GET /api/jobs/:id

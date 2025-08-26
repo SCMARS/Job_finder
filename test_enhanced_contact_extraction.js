@@ -7,7 +7,7 @@ const logger = require('./server/utils/logger');
 async function testEnhancedContactExtraction() {
   console.log('🧪 Тестирование расширенного извлечения контактной информации...\n');
   
-  // Симулируем вакансию для тестирования
+  
   const testJob = {
     id: 'test-12345-enhanced-S',
     company: 'Stiegler Personalmanagement GmbH',
