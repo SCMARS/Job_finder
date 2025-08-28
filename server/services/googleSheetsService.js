@@ -96,7 +96,7 @@ class GoogleSheetsService {
         return; // Skip when disabled
       }
 
-      const headers = [
+      const getDesiredHeaders = () => ([
         'ID',
         'Company Name',
         'Job Title',
@@ -105,52 +105,53 @@ class GoogleSheetsService {
         'Description',
         'Requirements',
         'Job URL',
-        'Contact Email', // Real extracted email
-        'Contact Phone', // Real extracted phone
-        'Contact Person', // NEW: Herr/Frau Name
-        'Company Address', // NEW: Full company address
-        'Company Website', // NEW: Company website
-        'Extracted Company Name', // NEW: Company name from contact block
+        'Contact Email',
+        'Contact Phone',
+        'Anrede',
+        'Contact Person',
+        'Company Address',
+        'Company PlzOrt',
+        'Company Website',
+        'Extracted Company Name',
         'Salary',
         'Published Date',
         'Application Deadline',
-        'Enrichment Confidence', // Confidence level
-        'Has Real Email', // Yes/No flag
-        'Enrichment Status', // Status of enrichment process
+        'Enrichment Confidence',
+        'Has Real Email',
+        'Enrichment Status',
         'Instantly Status',
         'Pipedrive Status',
         'Processing Status',
-        'Duplicate Status', // NEW: Duplicate detection status
+        'Duplicate Status',
         'Created At',
         'Updated At'
-      ];
+      ]);
 
+      const headers = getDesiredHeaders();
       const a1 = (r) => `${this.sheetTitle || 'Sheet1'}!${r}`;
 
-      // Check if headers exist (extended to Z for new columns)
+      // Read current headers (extended to AB)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: a1('A1:Z1')
+        range: a1('A1:AB1')
       });
 
-      if (!response.data.values || response.data.values.length === 0) {
-        // Add headers if they don't exist
+      const current = (response.data.values && response.data.values[0]) || [];
+      const needsUpdate = current.length !== headers.length || headers.some((h, i) => (current[i] || '') !== h);
+
+      if (needsUpdate) {
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
-          range: a1('A1:Z1'),
+          range: a1('A1:AB1'),
           valueInputOption: 'RAW',
-          resource: {
-            values: [headers]
-          }
+          resource: { values: [headers] }
         });
-
-        logger.sheets.info('Headers added to spreadsheet');
+        logger.sheets.info('Headers synchronized with desired schema', { updated: true });
       }
     } catch (error) {
       logger.sheets.error('Failed to ensure headers', { error: error.message });
       if (!this.isDisabled) {
-        // If configured but failing, bubble up; otherwise ignore when disabled
-      throw error;
+        throw error;
       }
     }
   }
@@ -239,7 +240,7 @@ class GoogleSheetsService {
           const rows = batch.map(job => this.jobToRow(job));
           
           const nextRow = await this.getNextEmptyRow();
-          const range = a1(`A${nextRow}:Z${nextRow + rows.length - 1}`);
+          const range = a1(`A${nextRow}:AB${nextRow + rows.length - 1}`);
 
           await this.sheets.spreadsheets.values.update({
             spreadsheetId: this.spreadsheetId,
@@ -267,7 +268,7 @@ class GoogleSheetsService {
         const rows = uniqueJobs.map(job => this.jobToRow(job));
         
         const nextRow = await this.getNextEmptyRow();
-        const range = a1(`A${nextRow}:Z${nextRow + rows.length - 1}`);
+        const range = a1(`A${nextRow}:AB${nextRow + rows.length - 1}`);
 
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
@@ -527,33 +528,95 @@ class GoogleSheetsService {
    * @returns {Array} Row data
    */
   jobToRow(job) {
+    const normalizePhone = (raw) => {
+      if (!raw) return '';
+      let p = String(raw).replace(/\s+/g, ' ').replace(/["']/g, '').trim();
+      p = p.replace(/[^+\d]/g, '');
+      p = p.replace(/(?!^)[+]/g, '');
+      const digits = p.replace(/\D/g, '');
+      if (digits.length < 7 || digits.length > 20) return '';
+      return p;
+    };
+
+    const parseSalutation = (person) => {
+      if (!person) return '';
+      const m = String(person).match(/\b(Herr|Frau)\b/i);
+      return m ? (m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase()) : '';
+    };
+
+    const stripSalutation = (person) => {
+      if (!person) return '';
+      return String(person)
+        .replace(/\r?\n.+$/s, '') // keep only first line
+        .replace(/\b(Herr|Frau)\b\s*/i, '')
+        .replace(/\b(Strasse|Straße|Str\.|Weg|Platz|Allee)\b.*$/i, '') // if street leaked in, cut it
+        .replace(/["']/g, '')
+        .trim();
+    };
+
+    const splitAddress = (addr) => {
+      if (!addr) return { street: '', plzOrt: '' };
+      let cleaned = String(addr)
+        .replace(/\r?\n/g, ' ')
+        .replace(/["']/g, '')
+        .replace(/\s+/g, ' ')
+        .replace(/\b(Telefon|Phone|Tel\.?):?.*$/i, '')
+        .trim();
+
+      // remove leading company or contact name if present
+      if (job.company) {
+        const comp = String(job.company).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        cleaned = cleaned.replace(new RegExp('^' + comp + '\\s*,?\\s*', 'i'), '');
+      }
+      if (contactPerson) {
+        const nameOnly = stripSalutation(contactPerson);
+        if (nameOnly) {
+          const nameEsc = nameOnly.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          cleaned = cleaned.replace(new RegExp('^' + nameEsc + '\\s*,?\\s*', 'i'), '');
+        }
+      }
+
+      const m = cleaned.match(/(.+?)\s*(?:,\s*)?(\b\d{5}\b\s+[A-Za-zÄÖÜäöüß \-\/]+)$/);
+      if (m) {
+        return { street: m[1].trim(), plzOrt: m[2].trim() };
+      }
+      return { street: cleaned, plzOrt: '' };
+    };
+
+    const contactPerson = job.contactPerson || '';
+    const anrede = parseSalutation(contactPerson);
+    const contactName = stripSalutation(contactPerson);
+    const { street, plzOrt } = splitAddress(job.companyAddress || '');
+
     return [
       job.id || '',
       job.company || '',
       job.title || '',
       job.location || '',
       job.employmentType || '',
-      job.description ? job.description.substring(0, 500) : '', // Limit description length
+      job.description ? job.description.substring(0, 500) : '',
       job.requirements ? job.requirements.substring(0, 500) : '',
       job.externalUrl || '',
-      job.contactEmail || '', // Real extracted email
-      job.contactPhone || '', // Real extracted phone
-      job.contactPerson || '', // NEW: Contact person (Herr/Frau Name)
-      job.companyAddress || '', // NEW: Company address
-      job.companyWebsite || '', // NEW: Company website
-      job.extractedCompanyName || '', // NEW: Extracted company name
+      job.contactEmail || '',
+      normalizePhone(job.contactPhone),
+      anrede,
+      contactName,
+      street,
+      plzOrt,
+      job.companyWebsite || '',
+      job.extractedCompanyName || '',
       job.salary || '',
       job.publishedDate || '',
       job.applicationDeadline || '',
-      job.enrichment?.confidence || '', // Enrichment confidence
-      job.enrichment?.hasRealEmail ? 'Yes' : 'No', // Has real email flag
-      job.enrichment?.status || 'Pending', // Enrichment Status
-      'Pending', // Instantly Status
-      'Pending', // Pipedrive Status
-      'New', // Processing Status
-      'New', // Duplicate Status - NEW
-      new Date().toISOString(), // Created At
-      new Date().toISOString()  // Updated At
+      job.enrichment?.confidence || '',
+      job.enrichment?.hasRealEmail ? 'Yes' : 'No',
+      job.enrichment?.status || 'Pending',
+      'Pending',
+      'Pending',
+      'New',
+      'New',
+      new Date().toISOString(),
+      new Date().toISOString()
     ];
   }
 
@@ -574,22 +637,24 @@ class GoogleSheetsService {
       externalUrl: row[7] || '',
       contactEmail: row[8] || '',
       contactPhone: row[9] || '',
-      contactPerson: row[10] || '', // NEW
-      companyAddress: row[11] || '', // NEW
-      companyWebsite: row[12] || '', // NEW
-      extractedCompanyName: row[13] || '', // NEW
-      salary: row[14] || '',
-      publishedDate: row[15] || '',
-      applicationDeadline: row[16] || '',
-      enrichmentConfidence: row[17] || '',
-      hasRealEmail: row[18] || '',
-      enrichmentStatus: row[19] || '',
-      instantlyStatus: row[20] || '',
-      pipedriveStatus: row[21] || '',
-      processingStatus: row[22] || '',
-      duplicateStatus: row[23] || '', // NEW: Duplicate status
-      createdAt: row[24] || '',
-      updatedAt: row[25] || ''
+      contactSalutation: row[10] || '',
+      contactPerson: row[11] || '',
+      companyAddress: row[12] || '',
+      companyPlzOrt: row[13] || '',
+      companyWebsite: row[14] || '',
+      extractedCompanyName: row[15] || '',
+      salary: row[16] || '',
+      publishedDate: row[17] || '',
+      applicationDeadline: row[18] || '',
+      enrichmentConfidence: row[19] || '',
+      hasRealEmail: row[20] || '',
+      enrichmentStatus: row[21] || '',
+      instantlyStatus: row[22] || '',
+      pipedriveStatus: row[23] || '',
+      processingStatus: row[24] || '',
+      duplicateStatus: row[25] || '',
+      createdAt: row[26] || '',
+      updatedAt: row[27] || ''
     };
   }
 
@@ -656,7 +721,7 @@ class GoogleSheetsService {
       // Получаем все строки с данными (начиная со строки 2, пропуская заголовки)
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: a1('A2:Z') // Получаем все колонки для каждой вакансии
+        range: a1('A2:AB')
       });
 
       if (!response.data.values || response.data.values.length === 0) {
@@ -665,7 +730,7 @@ class GoogleSheetsService {
 
       // Конвертируем строки в объекты вакансий
       const existingJobs = response.data.values
-        .filter(row => row[0] && row[0].trim() !== '') // Фильтруем пустые строки
+        .filter(row => row[0] && row[0].trim() !== '')
         .map(row => this.rowToJob(row));
 
       logger.sheets.info('Retrieved existing jobs for duplicate check', { 
@@ -693,15 +758,15 @@ class GoogleSheetsService {
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: a1('A2:U1000') // Adjust range as needed
+        range: a1('A2:AB1000')
       });
 
       if (!response.data.values) {
         return null;
       }
 
-      // Find job where enriched email (column N, index 13) matches
-      const jobRow = response.data.values.find(row => row[13] === email);
+      // Find job where contact email (column I, index 8) matches
+      const jobRow = response.data.values.find(row => row[8] === email);
       
       if (!jobRow) {
         return null;
@@ -730,7 +795,7 @@ class GoogleSheetsService {
 
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: a1('A2:U1000')
+        range: a1('A2:AB1000')
       });
 
       if (!response.data.values) {
